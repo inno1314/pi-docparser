@@ -5,7 +5,7 @@
 This package depends on the following third-party library at runtime:
 
 - **Package:** `@llamaindex/liteparse`
-- **Version used by this package:** `2.0.1`
+- **Version used by this package:** `2.10.1`
 - **Repository:** https://github.com/run-llama/liteparse
 - **License:** Apache-2.0
 - **Local license copy:** [`./licenses/LiteParse-APACHE-2.0.txt`](./licenses/LiteParse-APACHE-2.0.txt)

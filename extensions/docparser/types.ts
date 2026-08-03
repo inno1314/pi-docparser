@@ -1,10 +1,29 @@
 import type { Static } from "@earendil-works/pi-ai";
-import type { LiteParseConfig } from "@llamaindex/liteparse";
 
 import { DocumentParseSchema } from "./schema.ts";
 
 export type DocumentParseParams = Static<typeof DocumentParseSchema>;
-export type DocumentOutputFormat = NonNullable<DocumentParseParams["format"]>;
+export type DocumentOutputFormat = "text" | "json";
+
+export interface NativeSearchHit {
+  pageNum: number;
+  text: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  fontName?: string;
+  fontSize?: number;
+  confidence?: number;
+}
+
+export interface NativeScreenshotMetadata {
+  pageNum: number;
+  width: number;
+  height: number;
+  outputPath: string;
+  bytes: number;
+}
 
 export interface DocumentParseDetails {
   sourcePath: string;
@@ -19,8 +38,29 @@ export interface DocumentParseDetails {
   warnings?: string[];
 }
 
+export interface DocumentSearchDetails {
+  sourcePath: string;
+  resolvedPath: string;
+  phrase: string;
+  caseSensitive: boolean;
+  hits: NativeSearchHit[];
+  truncatedByCount: boolean;
+  truncatedByBytes: boolean;
+  previewTruncated: boolean;
+  warnings?: string[];
+}
+
+export interface DocumentScreenshotDetails {
+  sourcePath: string;
+  resolvedPath: string;
+  outputDir: string;
+  screenshotDir: string;
+  screenshots: NativeScreenshotMetadata[];
+  warnings?: string[];
+}
+
 export type InputCategory = "pdf" | "office" | "spreadsheet" | "image" | "other";
-export type DependencyName = "libreoffice" | "imagemagick";
+export type DependencyName = "libreoffice";
 export type PackageManagerId =
   | "brew"
   | "apt-get"
@@ -71,30 +111,91 @@ export interface UnixPrivilegeContext {
 }
 
 export interface ScreenshotSelection {
-  pageNumbers?: number[];
+  pageNumbers: number[];
   description: string;
 }
 
-export type LiteParseToolConfig = Partial<
-  Pick<
-    LiteParseConfig,
-    | "outputFormat"
-    | "ocrEnabled"
-    | "ocrLanguage"
-    | "ocrServerUrl"
-    | "numWorkers"
-    | "maxPages"
-    | "targetPages"
-    | "dpi"
-    | "preserveVerySmallText"
-    | "password"
-    | "tessdataPath"
-    | "quiet"
-  >
->;
+/** Project-owned parser configuration passed to LiteParse. */
+export interface LiteParseToolConfig {
+  outputFormat: DocumentOutputFormat;
+  ocrEnabled: boolean;
+  ocrLanguage?: string;
+  ocrServerUrl?: string;
+  numWorkers: number;
+  maxPages: number;
+  targetPages?: string;
+  dpi: number;
+  preserveVerySmallText: boolean;
+  password?: string;
+  tessdataPath?: string;
+  quiet: true;
+}
 
 export interface DocumentParsePlan {
   parserConfig: LiteParseToolConfig;
   screenshotSelection?: ScreenshotSelection;
   warnings: string[];
+}
+
+export interface NativeParseJob {
+  operation: "parse";
+  inputPath: string;
+  stagingDir: string;
+  outputPath: string;
+  config: LiteParseToolConfig;
+}
+
+export interface NativeSearchJob {
+  operation: "search";
+  inputPath: string;
+  stagingDir: string;
+  phrase: string;
+  caseSensitive: boolean;
+  maxResults: number;
+  config: LiteParseToolConfig;
+}
+
+export interface NativeScreenshotJob {
+  operation: "screenshot";
+  inputPath: string;
+  stagingDir: string;
+  outputDir: string;
+  pages: number[];
+  dpi: number;
+  password?: string;
+}
+
+export type NativeJob = NativeParseJob | NativeSearchJob | NativeScreenshotJob;
+
+export interface NativeParseResult {
+  pageCount: number;
+  outputBytes: number;
+  outputPath: string;
+}
+
+export interface NativeSearchResult {
+  pageCount: number;
+  hits: NativeSearchHit[];
+  truncatedByCount: boolean;
+  truncatedByBytes: boolean;
+}
+
+export interface NativeScreenshotResult {
+  screenshotDir: string;
+  screenshots: NativeScreenshotMetadata[];
+  totalBytes: number;
+}
+
+export interface NativeExecuteOptions {
+  signal?: AbortSignal;
+}
+
+export interface NativeExecutor {
+  execute(job: NativeParseJob, options?: NativeExecuteOptions): Promise<NativeParseResult>;
+  execute(job: NativeSearchJob, options?: NativeExecuteOptions): Promise<NativeSearchResult>;
+  execute(
+    job: NativeScreenshotJob,
+    options?: NativeExecuteOptions,
+  ): Promise<NativeScreenshotResult>;
+  dispose(): Promise<void>;
 }

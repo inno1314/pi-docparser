@@ -1,9 +1,19 @@
 import { constants as fsConstants } from "node:fs";
-import { access, open } from "node:fs/promises";
+import { access, open, stat } from "node:fs/promises";
 import { extname, isAbsolute, resolve as resolvePath } from "node:path";
 import { homedir } from "node:os";
 
-import { IMAGE_EXTENSIONS, OFFICE_EXTENSIONS, SPREADSHEET_EXTENSIONS } from "./constants.ts";
+import {
+  IMAGE_EXTENSIONS,
+  MAX_PAGE_NUMBER,
+  MAX_PAGE_SELECTION_BYTES,
+  MAX_PAGE_SELECTION_EXPANSION,
+  MAX_PAGE_SELECTION_TOKENS,
+  MAX_SCREENSHOT_PAGES,
+  MAX_SEARCH_PHRASE_BYTES,
+  OFFICE_EXTENSIONS,
+  SPREADSHEET_EXTENSIONS,
+} from "./constants.ts";
 import type { InputCategory, InputInspection, ScreenshotSelection } from "./types.ts";
 
 const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
@@ -68,9 +78,13 @@ async function resolveExistingPath(filePath: string, cwd: string): Promise<strin
 
 async function ensureReadableFile(filePath: string, sourcePath: string): Promise<void> {
   try {
+    const fileStats = await stat(filePath);
+    if (!fileStats.isFile()) {
+      throw new Error("not a regular file");
+    }
     await access(filePath, fsConstants.R_OK);
   } catch {
-    throw new Error(`Document file not found or not readable: ${sourcePath}`);
+    throw new Error(`Document file not found, not readable, or not a regular file: ${sourcePath}`);
   }
 }
 
@@ -173,58 +187,126 @@ export async function resolveDocumentTarget(
   };
 }
 
-export function parsePageSelection(selection: string): number[] {
+function parsePageNumber(value: string, token: string): number {
+  const normalized = value.replace(/^0+/, "") || "0";
+  const maximum = String(MAX_PAGE_NUMBER);
+
+  if (
+    normalized === "0" ||
+    normalized.length > maximum.length ||
+    (normalized.length === maximum.length && normalized > maximum)
+  ) {
+    throw new Error(`Page number must be between 1 and ${MAX_PAGE_NUMBER}: ${token}`);
+  }
+
+  return Number(normalized);
+}
+
+export function parsePageSelection(
+  selection: string,
+  maxPageCount = MAX_PAGE_SELECTION_EXPANSION,
+): number[] {
+  const byteLength = Buffer.byteLength(selection, "utf8");
+  if (byteLength > MAX_PAGE_SELECTION_BYTES) {
+    throw new Error(`Page selection exceeds the ${MAX_PAGE_SELECTION_BYTES}-byte UTF-8 limit.`);
+  }
+  if (
+    !Number.isInteger(maxPageCount) ||
+    maxPageCount < 1 ||
+    maxPageCount > MAX_PAGE_SELECTION_EXPANSION
+  ) {
+    throw new Error(
+      `Page count limit must be an integer between 1 and ${MAX_PAGE_SELECTION_EXPANSION}.`,
+    );
+  }
+
+  const tokens = selection.split(",");
+  if (tokens.length > MAX_PAGE_SELECTION_TOKENS) {
+    throw new Error(`Page selection exceeds the ${MAX_PAGE_SELECTION_TOKENS}-token limit.`);
+  }
+
   const pages = new Set<number>();
+  let expansionWork = 0;
 
-  for (const rawPart of selection.split(",")) {
-    const part = rawPart.trim();
-    if (!part) continue;
+  for (const rawToken of tokens) {
+    const token = rawToken.trim();
+    if (!token) {
+      throw new Error("Page selection contains an empty token.");
+    }
 
-    if (part.includes("-")) {
-      const [rawStart, rawEnd] = part.split("-", 2).map((value) => value.trim());
-      const start = Number.parseInt(rawStart, 10);
-      const end = Number.parseInt(rawEnd, 10);
-
-      if (!Number.isInteger(start) || !Number.isInteger(end) || start < 1 || end < start) {
-        throw new Error(`Invalid page range: ${part}`);
+    const singleMatch = /^(\d+)$/.exec(token);
+    if (singleMatch) {
+      expansionWork += 1;
+      if (expansionWork > MAX_PAGE_SELECTION_EXPANSION) {
+        throw new Error(
+          `Page selection exceeds the ${MAX_PAGE_SELECTION_EXPANSION}-page expansion limit.`,
+        );
       }
-
-      for (let page = start; page <= end; page++) {
-        pages.add(page);
-      }
+      pages.add(parsePageNumber(singleMatch[1], token));
       continue;
     }
 
-    const page = Number.parseInt(part, 10);
-    if (!Number.isInteger(page) || page < 1) {
-      throw new Error(`Invalid page number: ${part}`);
+    const rangeMatch = /^(\d+)\s*-\s*(\d+)$/.exec(token);
+    if (!rangeMatch) {
+      throw new Error(`Invalid page selection token: ${token}`);
     }
-    pages.add(page);
+
+    const start = parsePageNumber(rangeMatch[1], token);
+    const end = parsePageNumber(rangeMatch[2], token);
+    if (end < start) {
+      throw new Error(`Page range must be ascending: ${token}`);
+    }
+
+    const rangeLength = end - start + 1;
+    if (rangeLength > MAX_PAGE_SELECTION_EXPANSION - expansionWork) {
+      throw new Error(
+        `Page selection exceeds the ${MAX_PAGE_SELECTION_EXPANSION}-page expansion limit.`,
+      );
+    }
+    expansionWork += rangeLength;
+
+    for (let page = start; page <= end; page += 1) {
+      pages.add(page);
+    }
   }
 
   const result = Array.from(pages).sort((a, b) => a - b);
-  if (result.length === 0) {
-    throw new Error("No valid page numbers were provided.");
+  if (result.length > maxPageCount) {
+    throw new Error(`Page selection contains more than ${maxPageCount} selected pages.`);
   }
 
   return result;
 }
 
-export function resolveScreenshotSelection(selection: string): ScreenshotSelection {
+export function validateSearchPhrase(phrase: string): void {
+  if (!phrase.trim()) {
+    throw new Error("Search phrase must not be blank.");
+  }
+
+  if (Buffer.byteLength(phrase, "utf8") > MAX_SEARCH_PHRASE_BYTES) {
+    throw new Error(`Search phrase exceeds the ${MAX_SEARCH_PHRASE_BYTES}-byte UTF-8 limit.`);
+  }
+}
+
+export function resolveScreenshotSelection(selection?: string): ScreenshotSelection {
+  if (selection === undefined) {
+    return { pageNumbers: [1], description: "page 1" };
+  }
+
   const trimmedSelection = selection.trim();
   if (!trimmedSelection) {
     throw new Error("Screenshot page selection must not be empty.");
   }
 
   if (["all", "*"].includes(trimmedSelection.toLowerCase())) {
-    return {
-      pageNumbers: undefined,
-      description: "all pages",
-    };
+    throw new Error(
+      `Screenshot requests must name at most ${MAX_SCREENSHOT_PAGES} explicit pages; make bounded repeated calls instead of using "all" or "*".`,
+    );
   }
 
+  const pageNumbers = parsePageSelection(trimmedSelection, MAX_SCREENSHOT_PAGES);
   return {
-    pageNumbers: parsePageSelection(trimmedSelection),
-    description: `pages ${trimmedSelection}`,
+    pageNumbers,
+    description: `pages ${pageNumbers.join(", ")}`,
   };
 }

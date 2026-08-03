@@ -1,5 +1,13 @@
-import { DEFAULT_DPI, DEFAULT_MAX_PAGES, DEFAULT_NUM_WORKERS } from "./constants.ts";
-import { resolveScreenshotSelection } from "./input.ts";
+import {
+  DEFAULT_DPI,
+  DEFAULT_MAX_PAGES,
+  DEFAULT_NUM_WORKERS,
+  MAX_DPI,
+  MAX_NUM_WORKERS,
+  MAX_PAGES,
+  MIN_DPI,
+} from "./constants.ts";
+import { parsePageSelection, resolveScreenshotSelection } from "./input.ts";
 import type { DocumentParseParams, DocumentParsePlan, LiteParseToolConfig } from "./types.ts";
 
 export const REMOVED_V1_OPTIONS = [
@@ -27,6 +35,12 @@ export function getProvidedRemovedV1Options(rawParams: unknown): string[] {
 function normalizeOptionalString(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
+}
+
+function validateIntegerRange(name: string, value: number, minimum: number, maximum: number): void {
+  if (!Number.isInteger(value) || value < minimum || value > maximum) {
+    throw new Error(`${name} must be an integer between ${minimum} and ${maximum}.`);
+  }
 }
 
 export function resolveOcrLanguage(
@@ -80,16 +94,28 @@ export function buildLiteParseConfig(
 ): LiteParseToolConfig {
   const ocrServerUrl = normalizeOptionalString(params.ocrServerUrl);
   const ocrLanguage = resolveOcrLanguage(params, ocrServerUrl, warnings);
+  const numWorkers = params.numWorkers ?? DEFAULT_NUM_WORKERS;
+  const maxPages = params.maxPages ?? DEFAULT_MAX_PAGES;
+  const dpi = params.dpi ?? DEFAULT_DPI;
+
+  validateIntegerRange("numWorkers", numWorkers, 1, MAX_NUM_WORKERS);
+  validateIntegerRange("maxPages", maxPages, 1, MAX_PAGES);
+  validateIntegerRange("dpi", dpi, MIN_DPI, MAX_DPI);
+
+  const normalizedTargetPages =
+    params.targetPages === undefined
+      ? undefined
+      : parsePageSelection(params.targetPages, maxPages).join(",");
 
   return {
     outputFormat: params.format ?? "text",
     ocrEnabled: (params.ocr ?? "auto") !== "off",
     ocrLanguage,
     ocrServerUrl,
-    numWorkers: params.numWorkers ?? DEFAULT_NUM_WORKERS,
-    maxPages: params.maxPages ?? DEFAULT_MAX_PAGES,
-    targetPages: normalizeOptionalString(params.targetPages),
-    dpi: params.dpi ?? DEFAULT_DPI,
+    numWorkers,
+    maxPages,
+    targetPages: normalizedTargetPages,
+    dpi,
     preserveVerySmallText: params.preserveSmallText ?? false,
     password: normalizeOptionalString(params.password),
     tessdataPath: normalizeOptionalString(params.tessdataPath),
@@ -103,9 +129,10 @@ export function buildDocumentParsePlan(params: DocumentParseParams): DocumentPar
 
   return {
     parserConfig,
-    screenshotSelection: params.screenshotPages
-      ? resolveScreenshotSelection(params.screenshotPages)
-      : undefined,
+    screenshotSelection:
+      params.screenshotPages !== undefined
+        ? resolveScreenshotSelection(params.screenshotPages)
+        : undefined,
     warnings,
   };
 }

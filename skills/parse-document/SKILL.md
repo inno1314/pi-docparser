@@ -35,15 +35,18 @@ Recommended workflow for known text: `document_search` first, then `document_scr
 - Use `format: "json"` when the user needs structured page data, text positions, or bounding boxes.
 - Avoid JSON unless coordinates or programmatic structure matter.
 
-LiteParse v2 JSON output is shaped like:
+Stable JSON output is shaped like:
 
 ```json
-{ "pages": [{ "pageNum": 1, "text": "...", "textItems": [] }], "text": "..." }
+{
+  "pages": [{ "pageNum": 1, "width": 612, "height": 792, "text": "...", "textItems": [] }],
+  "text": "..."
+}
 ```
 
 ### Limit scope early
 
-If the task concerns only part of a document, pass `targetPages` instead of parsing everything.
+Pass a small, explicit `targetPages` range whenever the task does not require the whole document. Start with the user-named page or a range such as `"1-10"`, then make another bounded call if needed.
 
 Examples:
 
@@ -52,7 +55,8 @@ Examples:
 - a page range from the user
 - a specific page mentioned in an error report or screenshot request
 
-Default `maxPages` is `1000`, matching LiteParse v2.
+Default `maxPages` is `100`.
+The hard maximum is `1000`.
 
 ### Use OCR deliberately
 
@@ -64,7 +68,7 @@ Default `maxPages` is `1000`, matching LiteParse v2.
 - Many HTTP OCR servers instead expect ISO 639-1 codes such as `en`, `de`, `fr`, or `ja`.
 - Increase `dpi` only when OCR quality or screenshot readability needs it.
 - Use `ocrServerUrl` only when the user already has or wants an external OCR server.
-- Use `tessdataPath` only for offline/air-gapped setups or custom Tesseract `.traineddata` files.
+- Built-in OCR may download missing language data. Supply local `.traineddata` through `tessdataPath` (or `TESSDATA_PREFIX`) for offline/air-gapped work or custom language data.
 
 ### Password-protected documents
 
@@ -91,18 +95,18 @@ Use `document_screenshot` when text is not enough, for example:
 - visual page layout
 - forms where spatial relationships matter
 
-Keep screenshot page ranges small, usually one to four pages, unless the user explicitly asks for more.
+Request one to four explicit pages per call. Omit `pages` only when page 1 is intended. Never use `all` or `*`; make bounded repeated calls when the user needs more pages.
 
 `document_parse` also supports `screenshotPages` when parsing and screenshotting should happen together, but prefer the dedicated `document_screenshot` tool for visual-only follow-up.
 
 ## Follow-up workflow
 
-`document_parse` writes parsed output to temporary files and returns their paths. `document_screenshot` writes PNGs to temporary files and also returns image blocks.
+`document_parse` writes parsed output to temporary files and returns their paths. `document_screenshot` saves every PNG but only inlines images up to 3 MiB each and 12 MiB raw total per result.
 
 After calling tools:
 
 1. inspect returned parsed output paths with `read` when full content is needed
-2. inspect returned screenshot paths with `read` when file-level visual review is needed
+2. inspect returned screenshot paths with `read`, especially when a warning says an image was not inlined
 3. only copy files into the project if the user wants persistent artifacts
 
 Do not inline an entire large document into context. Let the tool save the full result, then inspect selectively.
@@ -124,7 +128,7 @@ Alternatives:
 ## Important constraints and expectations
 
 - Office documents and spreadsheets may require LibreOffice on the host machine.
-- Image inputs may require ImageMagick on the host machine.
+- Image inputs are handled natively without an external image-conversion dependency.
 - The tools surface missing dependencies as friendly errors; do not misdiagnose them as generic parser failures.
 - Parsed outputs and screenshots are temporary by default. If the user wants durable files in the repo or a chosen folder, copy returned temp files afterward.
 - The tools accept pi-style paths such as `@relative/file.pdf` and `~/Documents/file.pdf`.
@@ -164,7 +168,7 @@ Use returned page/bounding-box hits for citations or screenshot follow-up.
 
 Use `document_screenshot` with:
 
-- `pages` for the relevant page range
+- `pages` for a small explicit range of one to four relevant pages
 - higher `dpi` only if readability is a problem
 
 ### Parse a scanned or image-based document

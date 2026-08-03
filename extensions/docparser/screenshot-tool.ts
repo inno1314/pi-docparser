@@ -1,36 +1,51 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, open, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 
 import { Type, type Static } from "@earendil-works/pi-ai";
 import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import { DEFAULT_DPI } from "./constants.ts";
-import { appendDoctorHint, getMissingHostDependencyMessage } from "./deps.ts";
+import {
+  DEFAULT_DPI,
+  INLINE_PNG_MAX_BYTES,
+  INLINE_PNG_TOTAL_MAX_BYTES,
+  MAX_DPI,
+  MAX_PAGE_SELECTION_BYTES,
+  MAX_SCREENSHOT_PAGES,
+  MIN_DPI,
+} from "./constants.ts";
+import {
+  appendDoctorHint,
+  getMissingHostDependencyMessage,
+  isDependencySetupMessage,
+} from "./deps.ts";
 import { resolveDocumentTarget, resolveScreenshotSelection } from "./input.ts";
 import { getProvidedRemovedV1Options, getRemovedV1OptionsMessage } from "./liteparse-config.ts";
-import { loadLiteParseModule } from "./liteparse-module.ts";
+import { formatNativeExecutionError, NativeExecutionError } from "./native-executor.ts";
+import type {
+  DocumentScreenshotDetails,
+  NativeExecutor,
+  NativeScreenshotMetadata,
+} from "./types.ts";
 
-const DocumentScreenshotSchema = Type.Object({
-  path: Type.String({
-    description: "Path to the document file to screenshot",
-  }),
+export const DocumentScreenshotSchema = Type.Object({
+  path: Type.String({ description: "Path to the document file to screenshot" }),
   pages: Type.Optional(
     Type.String({
-      description:
-        'Optional page selection for screenshots, e.g. "1-3,8" or "all". Defaults to all pages.',
+      maxLength: MAX_PAGE_SELECTION_BYTES,
+      description: `Optional explicit page selection for screenshots, e.g. "1-3,8" (maximum ${MAX_SCREENSHOT_PAGES} pages; default: page 1).`,
     }),
   ),
   dpi: Type.Optional(
     Type.Integer({
-      minimum: 72,
-      description: "Rendering DPI for screenshots (default: 150)",
+      minimum: MIN_DPI,
+      maximum: MAX_DPI,
+      description: `Rendering DPI for screenshots (default: ${DEFAULT_DPI})`,
     }),
   ),
   password: Type.Optional(
-    Type.String({
-      description: "Optional password for encrypted or password-protected documents",
-    }),
+    Type.String({ description: "Optional password for encrypted or password-protected documents" }),
   ),
 });
 
@@ -42,31 +57,92 @@ function normalizeOptionalString(value: string | undefined): string | undefined 
 }
 
 function buildFriendlyErrorMessage(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-
-  if (
-    message.includes("LibreOffice is not installed") ||
-    message.includes("ImageMagick is not installed")
-  ) {
-    return appendDoctorHint(message);
-  }
-
+  const message =
+    error instanceof NativeExecutionError
+      ? formatNativeExecutionError(error, "Screenshot generation failed.")
+      : error instanceof Error
+        ? error.message
+        : String(error);
+  if (isDependencySetupMessage(message)) return appendDoctorHint(message);
   return message.startsWith("Screenshot generation failed:")
     ? message
     : `Screenshot generation failed: ${message}`;
 }
 
-export function registerDocumentScreenshotTool(pi: ExtensionAPI) {
+async function inlineScreenshots(metadata: NativeScreenshotMetadata[]): Promise<{
+  images: Array<{ type: "image"; data: string; mimeType: "image/png" }>;
+  warnings: string[];
+}> {
+  const images: Array<{ type: "image"; data: string; mimeType: "image/png" }> = [];
+  const warnings: string[] = [];
+  let rawTotal = 0;
+  for (const screenshot of metadata.slice(0, MAX_SCREENSHOT_PAGES)) {
+    if (screenshot.bytes > INLINE_PNG_MAX_BYTES) {
+      warnings.push(
+        `Page ${screenshot.pageNum} was not inlined because ${screenshot.outputPath} exceeds the ${INLINE_PNG_MAX_BYTES}-byte inline limit.`,
+      );
+      continue;
+    }
+    if (rawTotal + screenshot.bytes > INLINE_PNG_TOTAL_MAX_BYTES) {
+      warnings.push(
+        `Page ${screenshot.pageNum} was not inlined because the ${INLINE_PNG_TOTAL_MAX_BYTES}-byte aggregate inline limit was reached. Saved file: ${screenshot.outputPath}`,
+      );
+      continue;
+    }
+    try {
+      const handle = await open(screenshot.outputPath, "r");
+      try {
+        const fileStats = await handle.stat();
+        if (
+          !fileStats.isFile() ||
+          fileStats.size !== screenshot.bytes ||
+          fileStats.size > INLINE_PNG_MAX_BYTES
+        ) {
+          warnings.push(
+            `Page ${screenshot.pageNum} was not inlined because its saved PNG size changed. Saved file: ${screenshot.outputPath}`,
+          );
+          continue;
+        }
+        if (rawTotal + fileStats.size > INLINE_PNG_TOTAL_MAX_BYTES) {
+          warnings.push(
+            `Page ${screenshot.pageNum} was not inlined because the aggregate inline limit was reached. Saved file: ${screenshot.outputPath}`,
+          );
+          continue;
+        }
+        const image = Buffer.alloc(fileStats.size);
+        const { bytesRead } = await handle.read(image, 0, image.byteLength, 0);
+        const finalStats = await handle.stat();
+        if (bytesRead !== image.byteLength || finalStats.size !== fileStats.size) {
+          warnings.push(
+            `Page ${screenshot.pageNum} was not inlined because its saved PNG changed while reading. Saved file: ${screenshot.outputPath}`,
+          );
+          continue;
+        }
+        rawTotal += image.byteLength;
+        images.push({ type: "image", mimeType: "image/png", data: image.toString("base64") });
+      } finally {
+        await handle.close();
+      }
+    } catch {
+      warnings.push(
+        `Page ${screenshot.pageNum} could not be inlined, but remains available at ${screenshot.outputPath}.`,
+      );
+    }
+  }
+  return { images, warnings };
+}
+
+export function registerDocumentScreenshotTool(pi: ExtensionAPI, executor: NativeExecutor): void {
   pi.registerTool({
     name: "document_screenshot",
     label: "Document Screenshot",
     description:
-      "Render local document pages as PNG screenshots with LiteParse v2 and return image blocks plus saved PNG file paths. Use when text extraction is insufficient for charts, diagrams, signatures, dense tables, or layout.",
+      "Render up to four local document pages as PNG screenshots with LiteParse v2 and return bounded image blocks plus saved PNG paths.",
     promptSnippet:
-      "Render document pages as PNG images the model can inspect directly; also saves PNGs to temp files.",
+      "Render bounded document pages as PNG images the model can inspect directly; also saves PNGs to temp files.",
     promptGuidelines: [
       "Use document_screenshot when document_parse text is not enough to answer because visual layout, charts, signatures, or figures matter.",
-      "Keep pages small, such as one to four pages, unless the user explicitly asks for more.",
+      `Request at most ${MAX_SCREENSHOT_PAGES} explicit pages per call; use bounded repeated calls for more pages.`,
       "Use document_search first when looking for a known phrase, then screenshot only the relevant pages.",
     ],
     parameters: DocumentScreenshotSchema,
@@ -76,110 +152,72 @@ export function registerDocumentScreenshotTool(pi: ExtensionAPI) {
         return {
           content: [
             {
-              type: "text",
+              type: "text" as const,
               text: "Document screenshot rendering was cancelled before it started.",
             },
           ],
           details: {},
         };
       }
-
       const removedOptions = getProvidedRemovedV1Options(rawParams);
-      if (removedOptions.length > 0) {
-        throw new Error(getRemovedV1OptionsMessage(removedOptions));
-      }
-
+      if (removedOptions.length > 0) throw new Error(getRemovedV1OptionsMessage(removedOptions));
       const params = rawParams as DocumentScreenshotParams;
-      const emit = (text: string) =>
-        onUpdate?.({
-          content: [{ type: "text", text }],
-          details: {},
-        });
+      const emit = (text: string) => onUpdate?.({ content: [{ type: "text", text }], details: {} });
+      let outputDir: string | undefined;
 
       try {
         const input = await resolveDocumentTarget(params.path, ctx.cwd);
         const missingHostDependencyMessage = await getMissingHostDependencyMessage(
           input.inspection,
         );
-        if (missingHostDependencyMessage) {
-          throw new Error(missingHostDependencyMessage);
-        }
-
-        const selection = params.pages ? resolveScreenshotSelection(params.pages) : undefined;
-        emit(`Loading LiteParse for screenshot rendering...`);
-        const { LiteParse } = await loadLiteParseModule();
-        const parser = new LiteParse({
-          dpi: params.dpi ?? DEFAULT_DPI,
-          password: normalizeOptionalString(params.password),
-          quiet: true,
-        });
-
-        emit(`Rendering screenshots for ${selection?.description ?? "all pages"}...`);
-        const screenshots = await parser.screenshot(input.resolvedPath, selection?.pageNumbers);
-        const outputDir = await mkdtemp(join(tmpdir(), "pi-document-screenshot-"));
+        if (missingHostDependencyMessage) throw new Error(missingHostDependencyMessage);
+        const selection = resolveScreenshotSelection(params.pages);
+        outputDir = await mkdtemp(join(tmpdir(), "pi-document-screenshot-"));
         const screenshotDir = join(outputDir, "screenshots");
-        await mkdir(screenshotDir, { recursive: true });
-
-        const detailsScreenshots: Array<{
-          pageNum: number;
-          width: number;
-          height: number;
-          outputPath: string;
-          bytes: number;
-        }> = [];
-        const content: Array<
-          { type: "text"; text: string } | { type: "image"; data: string; mimeType: string }
-        > = [];
-
-        for (const screenshot of screenshots) {
-          const outputPath = join(screenshotDir, `page_${screenshot.pageNum}.png`);
-          await writeFile(outputPath, screenshot.imageBuffer);
-          detailsScreenshots.push({
-            pageNum: screenshot.pageNum,
-            width: screenshot.width,
-            height: screenshot.height,
-            outputPath,
-            bytes: screenshot.imageBuffer.byteLength,
-          });
-        }
-
+        emit(`Rendering screenshots for ${selection.description}...`);
+        const result = await executor.execute(
+          {
+            operation: "screenshot",
+            inputPath: input.resolvedPath,
+            stagingDir: join(outputDir, `.screenshot-${randomUUID()}`),
+            outputDir: screenshotDir,
+            pages: selection.pageNumbers,
+            dpi: params.dpi ?? DEFAULT_DPI,
+            password: normalizeOptionalString(params.password),
+          },
+          { signal },
+        );
+        const inline = await inlineScreenshots(result.screenshots);
         const lines = [
           `Rendered document screenshots: ${input.sourcePath}`,
           `Resolved path: ${input.resolvedPath}`,
-          `Screenshot count: ${detailsScreenshots.length}`,
-          `Screenshots saved to: ${screenshotDir}`,
+          `Screenshot count: ${result.screenshots.length}`,
+          `Screenshots saved to: ${result.screenshotDir}`,
         ];
-
-        if (detailsScreenshots.length > 0) {
+        if (result.screenshots.length > 0) {
           lines.push("Screenshot files:");
-          for (const screenshot of detailsScreenshots.slice(0, 10)) {
+          for (const screenshot of result.screenshots.slice(0, MAX_SCREENSHOT_PAGES)) {
             lines.push(`- page ${screenshot.pageNum}: ${screenshot.outputPath}`);
           }
-          if (detailsScreenshots.length > 10) {
-            lines.push(`- ...and ${detailsScreenshots.length - 10} more`);
-          }
         }
-
-        content.push({ type: "text", text: lines.join("\n") });
-        for (const screenshot of screenshots) {
-          content.push({
-            type: "image",
-            mimeType: "image/png",
-            data: screenshot.imageBuffer.toString("base64"),
-          });
+        if (inline.warnings.length > 0) {
+          lines.push("Warnings:");
+          for (const warning of inline.warnings) lines.push(`- ${warning}`);
         }
-
+        const details: DocumentScreenshotDetails = {
+          sourcePath: input.sourcePath,
+          resolvedPath: input.resolvedPath,
+          outputDir,
+          screenshotDir: result.screenshotDir,
+          screenshots: result.screenshots.slice(0, MAX_SCREENSHOT_PAGES),
+          warnings: inline.warnings.length > 0 ? inline.warnings : undefined,
+        };
         return {
-          content,
-          details: {
-            sourcePath: input.sourcePath,
-            resolvedPath: input.resolvedPath,
-            outputDir,
-            screenshotDir,
-            screenshots: detailsScreenshots,
-          },
+          content: [{ type: "text" as const, text: lines.join("\n") }, ...inline.images],
+          details,
         };
       } catch (error) {
+        if (outputDir) await rm(outputDir, { recursive: true, force: true }).catch(() => undefined);
         throw new Error(buildFriendlyErrorMessage(error));
       }
     },

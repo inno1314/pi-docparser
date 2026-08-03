@@ -15,7 +15,7 @@ import type {
   UnixPrivilegeContext,
 } from "./types.ts";
 
-const DEPENDENCY_NAMES = ["libreoffice", "imagemagick"] as const;
+const DEPENDENCY_NAMES = ["libreoffice"] as const;
 const PLATFORM_LABELS = {
   darwin: "macOS",
   linux: "Linux",
@@ -29,42 +29,15 @@ const INPUT_CATEGORY_LABELS: Record<InputCategory, string> = {
   other: "Other / unknown",
 };
 const PACKAGE_NAMES: Record<PackageManagerId, Record<DependencyName, string>> = {
-  brew: {
-    libreoffice: "libreoffice",
-    imagemagick: "imagemagick",
-  },
-  "apt-get": {
-    libreoffice: "libreoffice",
-    imagemagick: "imagemagick",
-  },
-  dnf: {
-    libreoffice: "libreoffice",
-    imagemagick: "ImageMagick",
-  },
-  yum: {
-    libreoffice: "libreoffice",
-    imagemagick: "ImageMagick",
-  },
-  pacman: {
-    libreoffice: "libreoffice-fresh",
-    imagemagick: "imagemagick",
-  },
-  zypper: {
-    libreoffice: "libreoffice",
-    imagemagick: "ImageMagick",
-  },
-  apk: {
-    libreoffice: "libreoffice",
-    imagemagick: "imagemagick",
-  },
-  winget: {
-    libreoffice: "TheDocumentFoundation.LibreOffice",
-    imagemagick: "ImageMagick.Q16",
-  },
-  choco: {
-    libreoffice: "libreoffice-fresh",
-    imagemagick: "imagemagick.app",
-  },
+  brew: { libreoffice: "libreoffice" },
+  "apt-get": { libreoffice: "libreoffice" },
+  dnf: { libreoffice: "libreoffice" },
+  yum: { libreoffice: "libreoffice" },
+  pacman: { libreoffice: "libreoffice-fresh" },
+  zypper: { libreoffice: "libreoffice" },
+  apk: { libreoffice: "libreoffice" },
+  winget: { libreoffice: "TheDocumentFoundation.LibreOffice" },
+  choco: { libreoffice: "libreoffice-fresh" },
 };
 const BREW_CASK_DEPENDENCIES = new Set<DependencyName>(["libreoffice"]);
 const LINUX_MANAGERS: Array<{ id: PackageManagerId; label: string }> = [
@@ -75,7 +48,7 @@ const LINUX_MANAGERS: Array<{ id: PackageManagerId; label: string }> = [
   { id: "zypper", label: "zypper" },
   { id: "apk", label: "apk" },
 ];
-const DEPENDENCY_SETUP_PATTERNS = ["LibreOffice is not installed", "ImageMagick is not installed"];
+const DEPENDENCY_SETUP_PATTERNS = ["LibreOffice is not installed"];
 
 async function spawnSucceeded(command: string, args: string[]): Promise<boolean> {
   return new Promise((resolve) => {
@@ -343,18 +316,6 @@ const DEPENDENCY_METADATA: Record<
         "LibreOffice is not installed. Please install LibreOffice to convert office documents",
       ),
   },
-  imagemagick: {
-    label: "ImageMagick",
-    summary:
-      "Needed for image inputs such as PNG, JPG, TIFF, WebP, SVG, and similar formats that must be converted before parsing.",
-    findCommand: () =>
-      findFirstAvailableCommand(process.platform === "win32" ? ["magick"] : ["magick", "convert"]),
-    getMissingMessage: () =>
-      buildGuidedInstallMessage(
-        "imagemagick",
-        "ImageMagick is not installed. Please install ImageMagick to convert images",
-      ),
-  },
 };
 
 export function getRelevantDependencyNames(inspection?: InputInspection): Set<DependencyName> {
@@ -362,14 +323,9 @@ export function getRelevantDependencyNames(inspection?: InputInspection): Set<De
     return new Set(DEPENDENCY_NAMES);
   }
 
-  const relevantDependencies =
-    inspection.category === "office" || inspection.category === "spreadsheet"
-      ? new Set<DependencyName>(["libreoffice"])
-      : inspection.category === "image"
-        ? new Set<DependencyName>(["imagemagick"])
-        : new Set<DependencyName>();
-
-  return relevantDependencies;
+  return inspection.category === "office" || inspection.category === "spreadsheet"
+    ? new Set<DependencyName>(["libreoffice"])
+    : new Set<DependencyName>();
 }
 
 export async function diagnoseDependencies(

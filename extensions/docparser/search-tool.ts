@@ -1,22 +1,43 @@
 import { truncateHead, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { StringEnum, Type, type Static } from "@earendil-works/pi-ai";
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { PREVIEW_MAX_BYTES, PREVIEW_MAX_LINES } from "./constants.ts";
-import { appendDoctorHint, getMissingHostDependencyMessage } from "./deps.ts";
-import { resolveDocumentTarget } from "./input.ts";
+import {
+  DEFAULT_DPI,
+  DEFAULT_MAX_PAGES,
+  DEFAULT_MAX_RESULTS,
+  DEFAULT_NUM_WORKERS,
+  MAX_DPI,
+  MAX_NUM_WORKERS,
+  MAX_PAGES,
+  MAX_PAGE_SELECTION_BYTES,
+  MAX_RESULTS,
+  MAX_SEARCH_PHRASE_BYTES,
+  MIN_DPI,
+  PREVIEW_MAX_BYTES,
+  PREVIEW_MAX_LINES,
+} from "./constants.ts";
+import {
+  appendDoctorHint,
+  getMissingHostDependencyMessage,
+  isDependencySetupMessage,
+} from "./deps.ts";
+import { resolveDocumentTarget, validateSearchPhrase } from "./input.ts";
 import {
   buildLiteParseConfig,
   getProvidedRemovedV1Options,
   getRemovedV1OptionsMessage,
 } from "./liteparse-config.ts";
-import { loadLiteParseModule } from "./liteparse-module.ts";
+import { formatNativeExecutionError, NativeExecutionError } from "./native-executor.ts";
+import type { DocumentSearchDetails, NativeExecutor, NativeSearchHit } from "./types.ts";
 
-const DocumentSearchSchema = Type.Object({
-  path: Type.String({
-    description: "Path to the document file to search",
-  }),
+export const DocumentSearchSchema = Type.Object({
+  path: Type.String({ description: "Path to the document file to search" }),
   phrase: Type.String({
-    description: "Phrase to search for in the parsed document",
+    maxLength: MAX_SEARCH_PHRASE_BYTES,
+    description: `Phrase to search for in the parsed document (maximum ${MAX_SEARCH_PHRASE_BYTES} UTF-8 bytes)`,
   }),
   caseSensitive: Type.Optional(
     Type.Boolean({
@@ -25,6 +46,7 @@ const DocumentSearchSchema = Type.Object({
   ),
   targetPages: Type.Optional(
     Type.String({
+      maxLength: MAX_PAGE_SELECTION_BYTES,
       description: 'Optional page selection for parsing/searching, e.g. "1-5,10"',
     }),
   ),
@@ -35,9 +57,7 @@ const DocumentSearchSchema = Type.Object({
     }),
   ),
   ocrLanguage: Type.Optional(
-    Type.String({
-      description: "Optional single OCR language code, e.g. eng, deu, fra, jpn",
-    }),
+    Type.String({ description: "Optional single OCR language code, e.g. eng, deu, fra, jpn" }),
   ),
   ocrLanguages: Type.Optional(
     Type.Array(Type.String(), {
@@ -46,26 +66,31 @@ const DocumentSearchSchema = Type.Object({
     }),
   ),
   ocrServerUrl: Type.Optional(
-    Type.String({
-      description: "Optional HTTP OCR server URL implementing the LiteParse OCR API",
-    }),
+    Type.String({ description: "Optional HTTP OCR server URL implementing the LiteParse OCR API" }),
   ),
   numWorkers: Type.Optional(
     Type.Integer({
       minimum: 1,
-      description: "Optional OCR worker count (default: CPU cores - 1)",
+      maximum: MAX_NUM_WORKERS,
+      description: `Optional OCR worker count (default: ${DEFAULT_NUM_WORKERS}, maximum: ${MAX_NUM_WORKERS})`,
+    }),
+  ),
+  maxPages: Type.Optional(
+    Type.Integer({
+      minimum: 1,
+      maximum: MAX_PAGES,
+      description: `Maximum number of pages to search (default: ${DEFAULT_MAX_PAGES}, maximum: ${MAX_PAGES})`,
     }),
   ),
   dpi: Type.Optional(
     Type.Integer({
-      minimum: 72,
-      description: "Rendering DPI for OCR (default: 150)",
+      minimum: MIN_DPI,
+      maximum: MAX_DPI,
+      description: `Rendering DPI for OCR (default: ${DEFAULT_DPI})`,
     }),
   ),
   password: Type.Optional(
-    Type.String({
-      description: "Optional password for encrypted or password-protected documents",
-    }),
+    Type.String({ description: "Optional password for encrypted or password-protected documents" }),
   ),
   tessdataPath: Type.Optional(
     Type.String({
@@ -75,48 +100,36 @@ const DocumentSearchSchema = Type.Object({
   maxResults: Type.Optional(
     Type.Integer({
       minimum: 1,
-      description: "Maximum number of search hits to return (default: 50)",
+      maximum: MAX_RESULTS,
+      description: `Maximum number of search hits to return (default: ${DEFAULT_MAX_RESULTS}, maximum: ${MAX_RESULTS})`,
     }),
   ),
 });
 
 type DocumentSearchParams = Static<typeof DocumentSearchSchema>;
 
-type SearchHit = {
-  pageNum: number;
-  text: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  fontName?: string;
-  fontSize?: number;
-  confidence?: number;
-};
-
-function formatHit(hit: SearchHit): string {
+function formatHit(hit: NativeSearchHit): string {
   return `p${hit.pageNum} [${hit.x.toFixed(1)}, ${hit.y.toFixed(1)} ${hit.width.toFixed(1)}×${hit.height.toFixed(1)}] ${hit.text}`;
 }
 
 function buildFriendlyErrorMessage(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-
-  if (
-    message.includes("LibreOffice is not installed") ||
-    message.includes("ImageMagick is not installed")
-  ) {
-    return appendDoctorHint(message);
-  }
-
-  return message || "Document search failed.";
+  const message =
+    error instanceof NativeExecutionError
+      ? formatNativeExecutionError(error, "Document search failed.")
+      : error instanceof Error
+        ? error.message
+        : String(error);
+  return isDependencySetupMessage(message)
+    ? appendDoctorHint(message)
+    : message || "Document search failed.";
 }
 
-export function registerDocumentSearchTool(pi: ExtensionAPI) {
+export function registerDocumentSearchTool(pi: ExtensionAPI, executor: NativeExecutor): void {
   pi.registerTool({
     name: "document_search",
     label: "Document Search",
     description:
-      "Search a local document with LiteParse v2 and return phrase hits with page numbers and bounding boxes. Use this for citations, locating quoted text, and deciding which pages to inspect visually.",
+      "Search a local document with LiteParse v2 and return bounded projected phrase hits with page numbers and bounding boxes.",
     promptSnippet:
       "Search parsed documents for a phrase and get page + bounding-box hits for visual citations.",
     promptGuidelines: [
@@ -129,59 +142,45 @@ export function registerDocumentSearchTool(pi: ExtensionAPI) {
     async execute(_toolCallId, rawParams, signal, _onUpdate, ctx) {
       if (signal?.aborted) {
         return {
-          content: [{ type: "text", text: "Document search was cancelled before it started." }],
+          content: [
+            { type: "text" as const, text: "Document search was cancelled before it started." },
+          ],
           details: {},
         };
       }
-
       const removedOptions = getProvidedRemovedV1Options(rawParams);
-      if (removedOptions.length > 0) {
-        throw new Error(getRemovedV1OptionsMessage(removedOptions));
-      }
-
+      if (removedOptions.length > 0) throw new Error(getRemovedV1OptionsMessage(removedOptions));
       const params = rawParams as DocumentSearchParams;
 
       try {
+        validateSearchPhrase(params.phrase);
+        const maxResults = params.maxResults ?? DEFAULT_MAX_RESULTS;
+        if (!Number.isInteger(maxResults) || maxResults < 1 || maxResults > MAX_RESULTS) {
+          throw new Error(`maxResults must be an integer between 1 and ${MAX_RESULTS}.`);
+        }
         const input = await resolveDocumentTarget(params.path, ctx.cwd);
         const missingHostDependencyMessage = await getMissingHostDependencyMessage(
           input.inspection,
         );
-        if (missingHostDependencyMessage) {
-          throw new Error(missingHostDependencyMessage);
-        }
-
+        if (missingHostDependencyMessage) throw new Error(missingHostDependencyMessage);
         const warnings: string[] = [];
         const parserConfig = buildLiteParseConfig(
-          {
-            ...params,
-            format: "json",
-            maxPages: undefined,
-            preserveSmallText: false,
-          },
+          { ...params, format: "json", preserveSmallText: false },
           warnings,
         );
-        const { LiteParse, searchItems } = await loadLiteParseModule();
-        const parser = new LiteParse(parserConfig);
-        const parseResult = await parser.parse(input.resolvedPath);
-        const maxResults = params.maxResults ?? 50;
-        const hits: SearchHit[] = [];
-
-        for (const page of parseResult.pages) {
-          const pageHits = searchItems(page.textItems, {
+        const result = await executor.execute(
+          {
+            operation: "search",
+            inputPath: input.resolvedPath,
+            stagingDir: join(tmpdir(), `pi-document-search-${randomUUID()}`),
             phrase: params.phrase,
             caseSensitive: params.caseSensitive ?? false,
-          });
-
-          for (const hit of pageHits) {
-            hits.push({ ...hit, pageNum: page.pageNum });
-            if (hits.length >= maxResults) break;
-          }
-
-          if (hits.length >= maxResults) break;
-        }
-
-        const hitLines = hits.map(formatHit).join("\n");
-        const truncation = truncateHead(hitLines, {
+            maxResults,
+            config: parserConfig,
+          },
+          { signal },
+        );
+        const truncation = truncateHead(result.hits.map(formatHit).join("\n"), {
           maxLines: PREVIEW_MAX_LINES,
           maxBytes: PREVIEW_MAX_BYTES,
         });
@@ -189,37 +188,33 @@ export function registerDocumentSearchTool(pi: ExtensionAPI) {
           `Searched document: ${input.sourcePath}`,
           `Resolved path: ${input.resolvedPath}`,
           `Phrase: ${params.phrase}`,
-          `Hits returned: ${hits.length}${hits.length >= maxResults ? ` (capped at ${maxResults})` : ""}`,
+          `Hits returned: ${result.hits.length}`,
         ];
-
+        if (result.truncatedByCount)
+          lines.push(`Hit results were truncated at the ${maxResults}-result limit.`);
+        if (result.truncatedByBytes)
+          lines.push("Hit results were truncated at the native response byte limit.");
         if (warnings.length > 0) {
           lines.push("Warnings:");
           for (const warning of warnings) lines.push(`- ${warning}`);
         }
-
-        if (truncation.content.trim()) {
-          lines.push("Hits:");
-          lines.push(truncation.content.trim());
-        }
-
-        if (truncation.truncated) {
+        if (truncation.content.trim()) lines.push("Hits:", truncation.content.trim());
+        if (truncation.truncated)
           lines.push(
-            "Hit preview truncated. Use the structured tool details for the complete returned hit list.",
+            "Hit preview truncated. Use structured tool details for the bounded returned hit list.",
           );
-        }
-
-        return {
-          content: [{ type: "text", text: lines.join("\n") }],
-          details: {
-            sourcePath: input.sourcePath,
-            resolvedPath: input.resolvedPath,
-            phrase: params.phrase,
-            caseSensitive: params.caseSensitive ?? false,
-            hits,
-            truncated: truncation.truncated,
-            warnings: warnings.length > 0 ? warnings : undefined,
-          },
+        const details: DocumentSearchDetails = {
+          sourcePath: input.sourcePath,
+          resolvedPath: input.resolvedPath,
+          phrase: params.phrase,
+          caseSensitive: params.caseSensitive ?? false,
+          hits: result.hits,
+          truncatedByCount: result.truncatedByCount,
+          truncatedByBytes: result.truncatedByBytes,
+          previewTruncated: truncation.truncated,
+          warnings: warnings.length > 0 ? warnings : undefined,
         };
+        return { content: [{ type: "text" as const, text: lines.join("\n") }], details };
       } catch (error) {
         throw new Error(buildFriendlyErrorMessage(error));
       }

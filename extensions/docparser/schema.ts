@@ -1,5 +1,17 @@
 import { StringEnum, Type } from "@earendil-works/pi-ai";
 
+import {
+  DEFAULT_DPI,
+  DEFAULT_MAX_PAGES,
+  DEFAULT_NUM_WORKERS,
+  MAX_DPI,
+  MAX_NUM_WORKERS,
+  MAX_PAGES,
+  MAX_PAGE_SELECTION_BYTES,
+  MAX_SCREENSHOT_PAGES,
+  MIN_DPI,
+} from "./constants.ts";
+
 export const DocumentParseSchema = Type.Object({
   path: Type.String({
     description:
@@ -12,13 +24,14 @@ export const DocumentParseSchema = Type.Object({
   ),
   targetPages: Type.Optional(
     Type.String({
+      maxLength: MAX_PAGE_SELECTION_BYTES,
       description: 'Optional page selection for parsing, e.g. "1-5,10,15-20"',
     }),
   ),
   screenshotPages: Type.Optional(
     Type.String({
-      description:
-        'Optional page selection for screenshots, e.g. "1-3,8" or "all". Screenshots are saved as PNG files.',
+      maxLength: MAX_PAGE_SELECTION_BYTES,
+      description: `Optional explicit page selection for screenshots, e.g. "1-3,8" (maximum ${MAX_SCREENSHOT_PAGES} pages). Screenshots are saved as PNG files.`,
     }),
   ),
   ocr: Type.Optional(
@@ -48,19 +61,22 @@ export const DocumentParseSchema = Type.Object({
   numWorkers: Type.Optional(
     Type.Integer({
       minimum: 1,
-      description: "Optional OCR worker count (default: CPU cores - 1)",
+      maximum: MAX_NUM_WORKERS,
+      description: `Optional OCR worker count (default: ${DEFAULT_NUM_WORKERS}, maximum: ${MAX_NUM_WORKERS})`,
     }),
   ),
   maxPages: Type.Optional(
     Type.Integer({
       minimum: 1,
-      description: "Maximum number of pages to parse (default: 1000, matching LiteParse v2)",
+      maximum: MAX_PAGES,
+      description: `Maximum number of pages to parse (default: ${DEFAULT_MAX_PAGES}, maximum: ${MAX_PAGES})`,
     }),
   ),
   dpi: Type.Optional(
     Type.Integer({
-      minimum: 72,
-      description: "Rendering DPI for OCR and screenshots (default: 150)",
+      minimum: MIN_DPI,
+      maximum: MAX_DPI,
+      description: `Rendering DPI for OCR and screenshots (default: ${DEFAULT_DPI})`,
     }),
   ),
   preserveSmallText: Type.Optional(

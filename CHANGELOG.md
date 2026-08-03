@@ -4,6 +4,31 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows semantic versioning.
 
+## [4.0.0] - 2026-08-03
+
+### Breaking Changes
+
+- raised the minimum Node.js version to `22.19.0`; Pi `0.83.0` is the development and test baseline, while Pi core peer ranges follow the `"*"` host-resolution policy
+- changed the default `maxPages` from `1000` to `100`, retained `1000` as the hard maximum, and added strict page, worker, DPI, search, and output budgets
+- changed screenshot requests to default to page 1, allow at most four explicit pages, reject `all`/`*`, and return only bounded inline images while preserving every accepted PNG by saved path
+- stabilized JSON output as a bounded project-owned `{ pages, text }` projection instead of exposing additional upstream fields implicitly
+
+### Fixes
+
+- isolated each LiteParse native operation in a fresh child process behind one document-only FIFO so native crashes and worker out-of-memory failures do not terminate Pi
+- added active and queued cancellation, an internal 10-minute operation timeout, process-tree teardown, and fail-closed behavior when teardown cannot be confirmed
+- made parse and screenshot publication atomic and job-owned so failed or cancelled work does not publish partial artifacts or remove an earlier completed parse
+- removed the obsolete ImageMagick preflight and installation requirement because supported image inputs are converted natively
+
+### Dependencies
+
+- upgraded `@llamaindex/liteparse` from `2.0.1` to exactly `2.10.1`
+- updated `@earendil-works/pi-ai` and `@earendil-works/pi-coding-agent` development dependencies to exactly `0.83.0`
+
+### Tests
+
+- added policy, executor, worker, output-projection, tool, dependency, metadata, native-fixture, packed-install, and process-cleanup coverage, including cross-platform process-tree behavior
+
 ## [3.0.0] - 2026-05-28
 
 ### Breaking Changes

@@ -1,7 +1,8 @@
 import { truncateHead, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { randomUUID } from "node:crypto";
+import { mkdtemp, open, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { PREVIEW_MAX_BYTES, PREVIEW_MAX_LINES } from "./constants.ts";
 import {
@@ -10,7 +11,7 @@ import {
   isDependencySetupMessage,
 } from "./deps.ts";
 import { resolveDocumentTarget } from "./input.ts";
-import { loadLiteParseModule } from "./liteparse-module.ts";
+import { formatNativeExecutionError, NativeExecutionError } from "./native-executor.ts";
 import {
   buildDocumentParsePlan,
   getProvidedRemovedV1Options,
@@ -21,7 +22,7 @@ import type {
   DocumentParseDetails,
   DocumentParseParams,
   DocumentOutputFormat,
-  InputInspection,
+  NativeExecutor,
   ScreenshotSelection,
 } from "./types.ts";
 
@@ -29,46 +30,51 @@ function buildFriendlyErrorMessage(
   error: unknown,
   stage: "parse" | "screenshot" = "parse",
 ): string {
-  const message = error instanceof Error ? error.message : String(error);
+  const message =
+    error instanceof NativeExecutionError
+      ? formatNativeExecutionError(error, "Document parsing failed.")
+      : error instanceof Error
+        ? error.message
+        : String(error);
 
-  if (stage === "parse") {
-    if (isDependencySetupMessage(message)) {
-      return appendDoctorHint(message);
-    }
-
-    return message || "Document parsing failed.";
+  if (isDependencySetupMessage(message)) return appendDoctorHint(message);
+  if (stage === "screenshot") {
+    return message.startsWith("Screenshot generation failed:")
+      ? message
+      : `Screenshot generation failed: ${message}`;
   }
-
-  return message.startsWith("Screenshot generation failed:")
-    ? message
-    : `Screenshot generation failed: ${message}`;
+  return message || "Document parsing failed.";
 }
 
-function buildPreview(output: string): { preview: string; truncated: boolean } {
-  const truncation = truncateHead(output, {
-    maxLines: PREVIEW_MAX_LINES,
-    maxBytes: PREVIEW_MAX_BYTES,
-  });
-
-  return {
-    preview: truncation.content.trim(),
-    truncated: truncation.truncated,
-  };
+async function readPreview(outputPath: string): Promise<{ preview: string; truncated: boolean }> {
+  const fileStats = await stat(outputPath);
+  const handle = await open(outputPath, "r");
+  try {
+    const buffer = Buffer.alloc(Math.min(PREVIEW_MAX_BYTES, fileStats.size));
+    const { bytesRead } = await handle.read(buffer, 0, buffer.byteLength, 0);
+    const text = buffer.subarray(0, bytesRead).toString("utf8");
+    const truncation = truncateHead(text, {
+      maxLines: PREVIEW_MAX_LINES,
+      maxBytes: PREVIEW_MAX_BYTES,
+    });
+    return {
+      preview: truncation.content.trim(),
+      truncated: truncation.truncated || fileStats.size > bytesRead,
+    };
+  } finally {
+    await handle.close();
+  }
 }
 
 type ProgressEmitter = (text: string) => void;
 
 async function renderScreenshots(options: {
-  parser: {
-    screenshot(
-      filePath: string,
-      pageNumbers?: number[],
-    ): Promise<Array<{ pageNum: number; imageBuffer: Buffer }>>;
-  };
+  executor: NativeExecutor;
   screenshotSelection?: ScreenshotSelection;
-  inspection: InputInspection;
   resolvedPath: string;
   outputDir: string;
+  dpi: number;
+  password?: string;
   signal?: AbortSignal;
   emit: ProgressEmitter;
 }): Promise<{
@@ -79,11 +85,7 @@ async function renderScreenshots(options: {
 }> {
   const warnings: string[] = [];
   const selection = options.screenshotSelection;
-
-  if (!selection) {
-    return { screenshotCount: 0, warnings };
-  }
-
+  if (!selection) return { screenshotCount: 0, warnings };
   if (options.signal?.aborted) {
     warnings.push(
       "Operation was aborted before screenshot rendering. Parsed output was still saved.",
@@ -93,29 +95,26 @@ async function renderScreenshots(options: {
 
   try {
     options.emit(`Rendering screenshots for ${selection.description}...`);
-    const screenshots = await options.parser.screenshot(
-      options.resolvedPath,
-      selection.pageNumbers,
-    );
     const screenshotDir = join(options.outputDir, "screenshots");
-    await mkdir(screenshotDir, { recursive: true });
-
-    const allScreenshotPaths: string[] = [];
-    for (const screenshot of screenshots) {
-      const screenshotPath = join(screenshotDir, `page_${screenshot.pageNum}.png`);
-      await writeFile(screenshotPath, screenshot.imageBuffer);
-      allScreenshotPaths.push(screenshotPath);
-    }
-
-    const screenshotCount = allScreenshotPaths.length;
-    options.emit(
-      `Saved ${screenshotCount} screenshot${screenshotCount === 1 ? "" : "s"} to ${screenshotDir}`,
+    const result = await options.executor.execute(
+      {
+        operation: "screenshot",
+        inputPath: options.resolvedPath,
+        stagingDir: join(options.outputDir, `.screenshot-${randomUUID()}`),
+        outputDir: screenshotDir,
+        pages: selection.pageNumbers,
+        dpi: options.dpi,
+        password: options.password,
+      },
+      { signal: options.signal },
     );
-
+    options.emit(
+      `Saved ${result.screenshots.length} screenshot${result.screenshots.length === 1 ? "" : "s"} to ${result.screenshotDir}`,
+    );
     return {
-      screenshotCount,
-      screenshotDir,
-      screenshotPathsPreview: allScreenshotPaths.slice(0, 10),
+      screenshotCount: result.screenshots.length,
+      screenshotDir: result.screenshotDir,
+      screenshotPathsPreview: result.screenshots.map((item) => item.outputPath).slice(0, 4),
       warnings,
     };
   } catch (error) {
@@ -144,55 +143,39 @@ function buildSummary(options: {
     `Pages parsed: ${options.pageCount}`,
     `Parsed output saved to: ${options.outputPath}`,
   ];
-
   if (options.screenshotDir) {
     lines.push(`Screenshots saved to: ${options.screenshotDir}`);
     lines.push(`Screenshot count: ${options.screenshotCount}`);
-
     if (options.screenshotPathsPreview?.length) {
       lines.push("Screenshot files:");
-      for (const screenshotPath of options.screenshotPathsPreview) {
+      for (const screenshotPath of options.screenshotPathsPreview)
         lines.push(`- ${screenshotPath}`);
-      }
-
-      if (options.screenshotCount > options.screenshotPathsPreview.length) {
-        lines.push(
-          `- ...and ${options.screenshotCount - options.screenshotPathsPreview.length} more`,
-        );
-      }
     }
   }
-
   if (options.warnings.length > 0) {
     lines.push("Warnings:");
-    for (const warning of options.warnings) {
-      lines.push(`- ${warning}`);
-    }
+    for (const warning of options.warnings) lines.push(`- ${warning}`);
   }
-
   if (options.preview.length > 0) {
-    lines.push("Preview:");
-    lines.push(options.preview);
-
+    lines.push("Preview:", options.preview);
     if (options.truncated) {
-      lines.push("");
       lines.push(
+        "",
         `Preview truncated. Use read on ${options.outputPath} for the full parsed output.`,
       );
     }
   }
-
   return lines.join("\n");
 }
 
-export function registerDocumentParseTool(pi: ExtensionAPI) {
+export function registerDocumentParseTool(pi: ExtensionAPI, executor: NativeExecutor): void {
   pi.registerTool({
     name: "document_parse",
     label: "Document Parse",
     description:
-      "Parse local documents with bundled LiteParse v2 support. Supports PDF, DOCX, PPTX, XLSX, CSV, and common images. Returns parsed text or JSON saved to temp files plus metadata and optional screenshots.",
+      "Parse local documents with bundled LiteParse v2 support. Supports PDF, DOCX, PPTX, XLSX, CSV, and common images. Returns bounded projected text or JSON saved to temp files plus metadata and optional screenshots.",
     promptSnippet:
-      "Parse local documents to text or JSON with OCR, bounding boxes, page ranges, password support, offline OCR data, and optional screenshots. Full results are saved to temp files for follow-up inspection with read.",
+      "Parse local documents to text or stable projected JSON with OCR, bounding boxes, page ranges, password support, offline OCR data, and optional screenshots.",
     promptGuidelines: [
       "Use this tool instead of composing LiteParse CLI commands manually when the user wants local document parsing.",
       "After this tool returns output or screenshot paths, use read on those files when you need the full parsed content or to inspect generated screenshots.",
@@ -203,68 +186,65 @@ export function registerDocumentParseTool(pi: ExtensionAPI) {
     async execute(_toolCallId, rawParams, signal, onUpdate, ctx) {
       if (signal?.aborted) {
         return {
-          content: [{ type: "text", text: "Document parsing was cancelled before it started." }],
+          content: [
+            { type: "text" as const, text: "Document parsing was cancelled before it started." },
+          ],
           details: {},
         };
       }
-
       const emit: ProgressEmitter = (text) =>
-        onUpdate?.({
-          content: [{ type: "text", text }],
-          details: {},
-        });
+        onUpdate?.({ content: [{ type: "text", text }], details: {} });
       const removedOptions = getProvidedRemovedV1Options(rawParams);
-      if (removedOptions.length > 0) {
-        throw new Error(getRemovedV1OptionsMessage(removedOptions));
-      }
-
+      if (removedOptions.length > 0) throw new Error(getRemovedV1OptionsMessage(removedOptions));
       const params = rawParams as DocumentParseParams;
+      let outputDir: string | undefined;
+      let parseCompleted = false;
 
       try {
         const input = await resolveDocumentTarget(params.path, ctx.cwd);
         const plan = buildDocumentParsePlan(params);
         const warnings = [...plan.warnings];
-
         emit("Checking host dependencies...");
         const missingHostDependencyMessage = await getMissingHostDependencyMessage(
           input.inspection,
         );
-        if (missingHostDependencyMessage) {
-          throw new Error(missingHostDependencyMessage);
-        }
+        if (missingHostDependencyMessage) throw new Error(missingHostDependencyMessage);
 
-        emit("Loading LiteParse...");
-        const { LiteParse } = await loadLiteParseModule();
-        const parser = new LiteParse(plan.parserConfig);
-        const outputDir = await mkdtemp(join(tmpdir(), "pi-document-parse-"));
-
-        emit(`Parsing document: ${input.sourcePath}`);
-        const parseResult = await parser.parse(input.resolvedPath);
-        const outputFormat = plan.parserConfig.outputFormat ?? "text";
-        const outputText =
-          outputFormat === "json" ? JSON.stringify(parseResult, null, 2) : parseResult.text;
+        outputDir = await mkdtemp(join(tmpdir(), "pi-document-parse-"));
+        const outputFormat = plan.parserConfig.outputFormat;
         const outputPath = join(outputDir, outputFormat === "json" ? "parsed.json" : "parsed.txt");
-        await writeFile(outputPath, outputText, "utf8");
+        emit(`Parsing document: ${input.sourcePath}`);
+        const parseResult = await executor.execute(
+          {
+            operation: "parse",
+            inputPath: input.resolvedPath,
+            stagingDir: join(outputDir, `.parse-${randomUUID()}`),
+            outputPath,
+            config: plan.parserConfig,
+          },
+          { signal },
+        );
+        parseCompleted = true;
         emit(`Saved parsed output to ${outputPath}`);
 
         const screenshotResult = await renderScreenshots({
-          parser,
+          executor,
           screenshotSelection: plan.screenshotSelection,
-          inspection: input.inspection,
           resolvedPath: input.resolvedPath,
           outputDir,
+          dpi: plan.parserConfig.dpi,
+          password: plan.parserConfig.password,
           signal,
           emit,
         });
         warnings.push(...screenshotResult.warnings);
-
-        const { preview, truncated } = buildPreview(outputText);
+        const { preview, truncated } = await readPreview(outputPath);
         const content = buildSummary({
           sourcePath: input.sourcePath,
           resolvedPath: input.resolvedPath,
           outputFormat,
           outputPath,
-          pageCount: parseResult.pages.length,
+          pageCount: parseResult.pageCount,
           screenshotCount: screenshotResult.screenshotCount,
           screenshotDir: screenshotResult.screenshotDir,
           screenshotPathsPreview: screenshotResult.screenshotPathsPreview,
@@ -272,25 +252,22 @@ export function registerDocumentParseTool(pi: ExtensionAPI) {
           preview,
           truncated,
         });
-
         const details: DocumentParseDetails = {
           sourcePath: input.sourcePath,
           resolvedPath: input.resolvedPath,
           outputFormat,
           outputPath,
           outputDir,
-          pageCount: parseResult.pages.length,
+          pageCount: parseResult.pageCount,
           screenshotCount: screenshotResult.screenshotCount,
           screenshotDir: screenshotResult.screenshotDir,
           screenshotPathsPreview: screenshotResult.screenshotPathsPreview,
           warnings: warnings.length > 0 ? warnings : undefined,
         };
-
-        return {
-          content: [{ type: "text", text: content }],
-          details,
-        };
+        return { content: [{ type: "text" as const, text: content }], details };
       } catch (error) {
+        if (outputDir && !parseCompleted)
+          await rm(outputDir, { recursive: true, force: true }).catch(() => undefined);
         throw new Error(buildFriendlyErrorMessage(error));
       }
     },

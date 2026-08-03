@@ -1,6 +1,6 @@
 {
   "name": "pi-docparser",
-  "version": "3.0.1",
+  "version": "4.0.0",
   "description": "Pi package that adds document_parse, document_search, document_screenshot, and a companion skill for local document understanding with LiteParse v2.",
   "keywords": [
     "document-parse",
@@ -38,27 +38,33 @@
     "lint": "oxlint .",
     "lint:fix": "oxlint --fix .",
     "typecheck": "tsc -p tsconfig.json",
+    "test": "node --import tsx --test --test-concurrency=1 tests/*.test.ts",
+    "test:unit": "node --import tsx --test tests/config-policy.test.ts tests/deps.test.ts tests/input-policy.test.ts tests/package-metadata.test.ts tests/parse-output.test.ts tests/tools.test.ts",
+    "test:native": "node --import tsx --test --test-concurrency=1 tests/native-executor.test.ts tests/native-worker.integration.test.ts",
+    "test:packed": "node --import tsx --test tests/packed-install.test.ts",
+    "test:package": "node --import tsx --test tests/package-content.test.ts",
     "check:runtime": "node --input-type=module -e \"await import('./extensions/docparser/index.ts')\"",
-    "check": "oxfmt --check . && oxlint . && tsc -p tsconfig.json && node --input-type=module -e \"await import('./extensions/docparser/index.ts')\"",
+    "check": "pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run check:runtime && pnpm run pack:dry",
     "pack:dry": "npm pack --dry-run"
   },
   "dependencies": {
-    "@llamaindex/liteparse": "2.0.1"
+    "@llamaindex/liteparse": "2.10.1"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "0.74.0",
-    "@earendil-works/pi-coding-agent": "0.74.0",
-    "@types/node": "^25.7.0",
+    "@earendil-works/pi-ai": "0.83.0",
+    "@earendil-works/pi-coding-agent": "0.83.0",
+    "@types/node": "^25.9.5",
     "oxfmt": "^0.49.0",
-    "oxlint": "^1.64.0",
+    "oxlint": "^1.76.0",
+    "tsx": "^4.20.6",
     "typescript": "^6.0.3"
   },
   "peerDependencies": {
-    "@earendil-works/pi-ai": "^0.74.0",
-    "@earendil-works/pi-coding-agent": "^0.74.0"
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
   },
   "engines": {
-    "node": ">=20.6.0"
+    "node": ">=22.19.0"
   },
   "pi": {
     "extensions": [

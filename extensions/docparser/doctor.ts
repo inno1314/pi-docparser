@@ -103,7 +103,8 @@ function formatDoctorReport(options: {
     }
   }
 
-  if (missing.length > 0) {
+  const actionableMissing = options.inspection ? relevantMissing : missing;
+  if (actionableMissing.length > 0) {
     const preferredStrategies = getPreferredStrategies(options.strategies);
     if (preferredStrategies.length > 0) {
       lines.push("Suggested setup commands:");
@@ -143,13 +144,11 @@ async function collectDoctorState(inspection?: InputInspection): Promise<{
   const installCandidates = inspection
     ? missingDependencies.filter((diagnosis) => diagnosis.relevant)
     : missingDependencies;
-  const strategyInput = installCandidates.length > 0 ? installCandidates : missingDependencies;
-
   return {
     diagnoses,
     missingDependencies,
     installCandidates,
-    strategies: await buildInstallStrategies(strategyInput),
+    strategies: await buildInstallStrategies(inspection ? installCandidates : missingDependencies),
   };
 }
 
