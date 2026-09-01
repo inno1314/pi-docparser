@@ -58,7 +58,7 @@ pi install git+https://github.com/inno1314/pi-docparser.git
 ### Oh My Pi (`omp`)
 
 ```bash
-omp plugin install github:inno1314/pi-docparser
+omp plugin install github:inno1314/pi-docparser#main
 ```
 
 Or upstream npm release:
