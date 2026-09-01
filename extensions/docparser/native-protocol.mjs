@@ -99,12 +99,29 @@ function validateConfig(value) {
     "preserveVerySmallText",
     "quiet",
   ];
-  const optional = ["ocrLanguage", "ocrServerUrl", "targetPages", "password", "tessdataPath"];
+  const optional = [
+    "ocrEngine",
+    "ocrLanguage",
+    "ocrServerUrl",
+    "targetPages",
+    "password",
+    "tessdataPath",
+  ];
   assertKeys(value, required, optional, "request.config");
   if (value.outputFormat !== "text" && value.outputFormat !== "json") {
     throw new ProtocolValidationError("request.config.outputFormat must be text or json.");
   }
   assertBoolean(value.ocrEnabled, "request.config.ocrEnabled");
+  if (
+    "ocrEngine" in value &&
+    value.ocrEngine !== "auto" &&
+    value.ocrEngine !== "vision" &&
+    value.ocrEngine !== "tesseract"
+  ) {
+    throw new ProtocolValidationError(
+      "request.config.ocrEngine must be auto, vision, or tesseract.",
+    );
+  }
   assertInteger(value.numWorkers, "request.config.numWorkers", 1, 8);
   assertInteger(value.maxPages, "request.config.maxPages", 1, 1000);
   assertInteger(value.dpi, "request.config.dpi", 72, 300);

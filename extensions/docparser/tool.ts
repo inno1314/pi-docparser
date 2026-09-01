@@ -178,6 +178,7 @@ export function registerDocumentParseTool(pi: ExtensionAPI, executor: NativeExec
       "Parse local documents to text or stable projected JSON with OCR, bounding boxes, page ranges, password support, offline OCR data, and optional screenshots.",
     promptGuidelines: [
       "Use this tool instead of composing LiteParse CLI commands manually when the user wants local document parsing.",
+      "OCR auto mode extracts native text first, then prefers Apple Vision on macOS and falls back to Tesseract. Use ocrEngine only when the user requests a specific backend.",
       "After this tool returns output or screenshot paths, use read on those files when you need the full parsed content or to inspect generated screenshots.",
       "Do not use removed LiteParse v1 options preciseBoundingBox or preserveLayoutAlignmentAcrossPages. Use JSON bounding boxes, document_search, document_screenshot, or targetPages instead.",
     ],

@@ -53,16 +53,25 @@ export const DocumentSearchSchema = Type.Object({
   ocr: Type.Optional(
     StringEnum(["auto", "off"] as const, {
       description:
-        "OCR mode: auto uses LiteParse OCR behavior, off disables OCR for faster parsing",
+        "OCR mode: auto uses native text first and the configured OCR backend only when needed; off disables OCR",
+    }),
+  ),
+  ocrEngine: Type.Optional(
+    StringEnum(["auto", "vision", "tesseract"] as const, {
+      description:
+        "OCR backend: auto uses Apple Vision on supported macOS systems and Tesseract elsewhere; vision requires the bundled macOS helper; tesseract forces LiteParse OCR",
     }),
   ),
   ocrLanguage: Type.Optional(
-    Type.String({ description: "Optional single OCR language code, e.g. eng, deu, fra, jpn" }),
+    Type.String({
+      description:
+        "Optional OCR language. Apple Vision accepts BCP-47 identifiers and common Tesseract codes such as eng, deu, fra, and jpn.",
+    }),
   ),
   ocrLanguages: Type.Optional(
     Type.Array(Type.String(), {
       minItems: 1,
-      description: "Optional multiple OCR language codes for built-in Tesseract OCR",
+      description: "Optional OCR languages for Apple Vision, Tesseract, or an HTTP OCR server",
     }),
   ),
   ocrServerUrl: Type.Optional(
@@ -134,6 +143,7 @@ export function registerDocumentSearchTool(pi: ExtensionAPI, executor: NativeExe
       "Search parsed documents for a phrase and get page + bounding-box hits for visual citations.",
     promptGuidelines: [
       "Use document_search when the user asks where text appears in a document or needs source/citation locations.",
+      "OCR auto mode extracts native text first, then prefers Apple Vision on macOS and falls back to Tesseract. Use ocrEngine only when the user requests a specific backend.",
       "By default, document_search searches the first 100 pages of a document. If searching large documents (>100 pages), specify maxPages (e.g. 1000) or targetPages (e.g. '100-300').",
       "Use targetPages when the relevant section is known; it is faster than searching the whole document.",
       "Use document_screenshot after document_search when the page area needs visual inspection.",

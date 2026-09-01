@@ -29,10 +29,14 @@ test("published package contains worker runtime and legal/skill assets but no te
     "LICENSE",
     "README.md",
     "THIRD_PARTY_NOTICES.md",
+    "bin/vision-ocr-darwin-universal",
     "extensions/docparser/native-protocol.mjs",
     "extensions/docparser/native-worker.mjs",
     "extensions/docparser/parse-output.mjs",
+    "extensions/docparser/vision-ocr.mjs",
     "licenses/LiteParse-APACHE-2.0.txt",
+    "native/vision-ocr.swift",
+    "scripts/build-vision-helper.mjs",
     "skills/parse-document/SKILL.md",
   ];
 
@@ -56,7 +60,11 @@ test("the packed worker has a plain-JavaScript project import graph", async () =
     ([, specifier]) => specifier,
   );
 
-  assert.deepEqual(relativeImports.sort(), ["./native-protocol.mjs", "./parse-output.mjs"]);
+  assert.deepEqual(relativeImports.sort(), [
+    "./native-protocol.mjs",
+    "./parse-output.mjs",
+    "./vision-ocr.mjs",
+  ]);
   assert.equal(
     relativeImports.every((specifier) => specifier.endsWith(".mjs")),
     true,

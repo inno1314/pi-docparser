@@ -79,6 +79,7 @@ export function buildLiteParseConfig(
     DocumentParseParams,
     | "format"
     | "ocr"
+    | "ocrEngine"
     | "ocrLanguage"
     | "ocrLanguages"
     | "ocrServerUrl"
@@ -110,6 +111,7 @@ export function buildLiteParseConfig(
   return {
     outputFormat: params.format ?? "text",
     ocrEnabled: (params.ocr ?? "auto") !== "off",
+    ocrEngine: params.ocrEngine ?? "auto",
     ocrLanguage,
     ocrServerUrl,
     numWorkers,

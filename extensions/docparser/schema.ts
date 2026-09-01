@@ -37,20 +37,26 @@ export const DocumentParseSchema = Type.Object({
   ocr: Type.Optional(
     StringEnum(["auto", "off"] as const, {
       description:
-        "OCR mode: auto uses LiteParse OCR behavior, off disables OCR for faster parsing",
+        "OCR mode: auto uses native text first and the configured OCR backend only when needed; off disables OCR",
+    }),
+  ),
+  ocrEngine: Type.Optional(
+    StringEnum(["auto", "vision", "tesseract"] as const, {
+      description:
+        "OCR backend: auto uses Apple Vision on supported macOS systems and Tesseract elsewhere; vision requires the bundled macOS helper; tesseract forces LiteParse OCR",
     }),
   ),
   ocrLanguage: Type.Optional(
     Type.String({
       description:
-        "Optional single OCR language code. Built-in Tesseract typically uses ISO 639-3 codes such as eng, deu, fra, jpn. Many HTTP OCR servers instead expect ISO 639-1 codes such as en, de, fr, ja.",
+        "Optional single OCR language. Tesseract accepts codes such as eng, deu, fra, and jpn; Apple Vision also accepts BCP-47 identifiers and maps common Tesseract codes.",
     }),
   ),
   ocrLanguages: Type.Optional(
     Type.Array(Type.String(), {
       minItems: 1,
       description:
-        "Optional multiple OCR language codes. For built-in Tesseract they are joined into a multilingual language string. For HTTP OCR servers, only the first code is forwarded.",
+        "Optional OCR languages. Apple Vision accepts BCP-47 identifiers and common Tesseract codes; Tesseract joins values into a multilingual language string; HTTP servers receive the first value.",
     }),
   ),
   ocrServerUrl: Type.Optional(

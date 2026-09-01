@@ -2,7 +2,7 @@
 
 A standalone [Pi](https://shittycodingagent.ai/) package that adds local document-understanding tools plus a companion `parse-document` skill for AI agents.
 
-It wraps [`@llamaindex/liteparse`](https://github.com/run-llama/liteparse) 2.10.1, a Rust/PDFium-based local parser. Document processing stays on the local machine, with no LLM parsing or API key required. Built-in OCR may download missing language data unless local `.traineddata` files are supplied; configuring `ocrServerUrl` sends OCR work to that server.
+It wraps [`@llamaindex/liteparse`](https://github.com/run-llama/liteparse) 2.10.1, a Rust/PDFium-based local parser. Document processing stays on the local machine, with no LLM parsing or API key required. On macOS 14 or newer, automatic OCR prefers the bundled Apple Vision helper after native-text extraction; other systems and failed automatic Vision attempts fall back to LiteParse/Tesseract. Built-in Tesseract may download missing language data unless local `.traineddata` files are supplied; configuring `ocrServerUrl` sends OCR work to that server.
 
 ## What this package provides
 
@@ -146,6 +146,7 @@ document_parse({
   path: "./scans/report.pdf",
   targetPages: "1-5",
   ocr: "auto",
+  ocrEngine: "tesseract",
   ocrLanguage: "eng",
   tessdataPath: "/path/to/tessdata"
 })
@@ -274,14 +275,16 @@ LiteParse 2.10.1 handles image conversion natively, with no external image-conve
 
 ### OCR notes
 
-LiteParse uses built-in native Tesseract OCR by default when OCR is enabled and no `ocrServerUrl` is provided.
+OCR first attempts native document text extraction. Pages without native text use the selected backend:
 
-- OCR is selective: LiteParse OCRs text-sparse pages or image regions rather than blindly OCRing everything.
-- Built-in Tesseract typically uses ISO 639-3 language codes such as `eng`, `deu`, `fra`, `jpn`.
-- Many HTTP OCR servers instead expect ISO 639-1 codes such as `en`, `de`, `fr`, `ja`.
-- `ocrLanguages` is joined into a multilingual language string for built-in Tesseract.
-- When `ocrServerUrl` is used, only the first entry from `ocrLanguages` is forwarded.
-- Built-in OCR may download missing language data. For local-only language data, use `tessdataPath` or set `TESSDATA_PREFIX` to supplied `.traineddata` files.
+- `ocrEngine: "auto"` prefers the bundled Apple Vision helper on macOS 14 or newer and falls back to LiteParse/Tesseract. Other systems use Tesseract.
+- `ocrEngine: "vision"` requires macOS 14 or newer and fails instead of falling back when Vision is unavailable.
+- `ocrEngine: "tesseract"` forces LiteParse/Tesseract.
+- `ocrServerUrl` takes precedence over the local backend selection.
+- The Apple Vision helper is a signed universal `arm64`/`x86_64` binary. It prefers the Neural Engine for each supported compute stage, uses `.accurate` recognition and language correction, processes bounded page batches, and returns line bounding boxes and confidence.
+- Common Tesseract language codes such as `eng`, `deu`, `fra`, `rus`, and `jpn` map to Apple Vision identifiers. Native BCP-47 identifiers are also accepted.
+- `ocrLanguages` is joined into a multilingual language string for Tesseract. HTTP OCR servers receive only the first entry.
+- Tesseract may download missing language data. For local-only data, use `tessdataPath` or set `TESSDATA_PREFIX`.
 
 ## Host dependencies
 

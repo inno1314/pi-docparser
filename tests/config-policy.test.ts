@@ -92,6 +92,7 @@ test("default parser config is project-owned and bounded", () => {
   assert.deepEqual(config, {
     outputFormat: "text",
     ocrEnabled: true,
+    ocrEngine: "auto",
     ocrLanguage: undefined,
     ocrServerUrl: undefined,
     numWorkers: DEFAULT_NUM_WORKERS,
@@ -107,6 +108,8 @@ test("default parser config is project-owned and bounded", () => {
   type MarkdownIsExcluded = "markdown" extends LiteParseToolConfig["outputFormat"] ? false : true;
   const markdownIsExcluded: MarkdownIsExcluded = true;
   assert.equal(markdownIsExcluded, true);
+  assert.equal(buildLiteParseConfig({ ocrEngine: "vision" }, []).ocrEngine, "vision");
+  assert.equal(buildLiteParseConfig({ ocrEngine: "tesseract" }, []).ocrEngine, "tesseract");
 });
 
 test("parser config accepts exact resource boundaries and rejects values beyond them", () => {

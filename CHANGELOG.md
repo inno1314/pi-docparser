@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows semantic versioning.
 
+## [Unreleased]
+
+### Added
+
+- added a signed universal Apple Vision OCR helper for macOS 14 or newer, with Neural Engine preference, line bounding boxes, confidence values, language mapping, and bounded parallel page batches
+- added `ocrEngine: "auto" | "vision" | "tesseract"` to parsing and search; automatic mode preserves native text first, prefers Vision on macOS, and falls back to LiteParse/Tesseract
+
+### Tests
+
+- added macOS Vision OCR integration, language mapping, package-content, protocol compatibility, and cross-platform fallback coverage
+
 ## [4.0.0] - 2026-08-03
 
 ### Breaking Changes

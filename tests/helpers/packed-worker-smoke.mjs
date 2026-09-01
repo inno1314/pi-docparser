@@ -29,6 +29,7 @@ const request = {
   config: {
     outputFormat: "json",
     ocrEnabled: false,
+    ocrEngine: "auto",
     numWorkers: 1,
     maxPages: 1,
     dpi: 72,

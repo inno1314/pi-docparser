@@ -20,6 +20,7 @@ const workerUrl = new URL("./helpers/fake-native-worker.mjs", import.meta.url);
 const config: LiteParseToolConfig = {
   outputFormat: "text",
   ocrEnabled: false,
+  ocrEngine: "auto",
   numWorkers: 1,
   maxPages: 1,
   dpi: 150,

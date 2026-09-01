@@ -4,6 +4,7 @@ import { DocumentParseSchema } from "./schema.ts";
 
 export type DocumentParseParams = Static<typeof DocumentParseSchema>;
 export type DocumentOutputFormat = "text" | "json";
+export type OcrEngine = "auto" | "vision" | "tesseract";
 
 export interface NativeSearchHit {
   pageNum: number;
@@ -119,6 +120,7 @@ export interface ScreenshotSelection {
 export interface LiteParseToolConfig {
   outputFormat: DocumentOutputFormat;
   ocrEnabled: boolean;
+  ocrEngine: OcrEngine;
   ocrLanguage?: string;
   ocrServerUrl?: string;
   numWorkers: number;

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import test, { type TestContext } from "node:test";
+import { LiteParse } from "@llamaindex/liteparse";
 
 import {
   SCREENSHOT_FILE_MAX_BYTES,
@@ -19,6 +20,7 @@ const fixture = resolve("tests/fixtures/minimal.pdf");
 const config: LiteParseToolConfig = {
   outputFormat: "json",
   ocrEnabled: false,
+  ocrEngine: "auto",
   numWorkers: 1,
   maxPages: 1,
   dpi: 72,
@@ -150,6 +152,40 @@ test("real worker parses, searches, and screenshots a minimal PDF through bounde
     Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
   );
 });
+
+test(
+  "real worker uses Apple Vision OCR for a rasterized text page",
+  { skip: process.platform !== "darwin" ? "Apple Vision is macOS-only" : false },
+  async (t) => {
+    const directory = await mkdtemp(join(tmpdir(), "native-worker-vision-"));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const rasterizer = new LiteParse({ dpi: 150, quiet: true });
+    const [screenshot] = await rasterizer.screenshot(fixture, [1]);
+    const imagePath = join(directory, "hello-pi.png");
+    await writeFile(imagePath, screenshot.imageBuffer);
+
+    const executor = createNativeExecutor({ timeoutMs: 30_000 });
+    t.after(() => executor.dispose());
+    const outputPath = join(directory, "vision.json");
+    await executor.execute({
+      operation: "parse",
+      inputPath: imagePath,
+      stagingDir: join(directory, ".vision-job"),
+      outputPath,
+      config: {
+        ...config,
+        ocrEnabled: true,
+        ocrEngine: "vision",
+        dpi: 150,
+      },
+    });
+
+    const output = JSON.parse(await readFile(outputPath, "utf8"));
+    assert.match(output.text, /Hello\s+Pi/i);
+    assert.ok(output.pages[0].textItems.length > 0);
+    assert.ok(output.pages[0].textItems.every((item: { confidence?: number }) => item.confidence));
+  },
+);
 
 test("worker enforces search and screenshot result boundaries with fake LiteParse", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "native-worker-boundaries-"));

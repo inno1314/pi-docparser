@@ -61,14 +61,13 @@ The hard maximum is `1000`.
 ### Use OCR deliberately
 
 - Use `ocr: "off"` for native-text PDFs when OCR is unnecessary.
-- Leave OCR on automatic behavior for scanned PDFs or image-heavy documents.
-- Use `ocrLanguage` for a single OCR language.
-- Use `ocrLanguages` only when multilingual OCR is truly needed.
-- Built-in Tesseract usually expects ISO 639-3 codes such as `eng`, `deu`, `fra`, or `jpn`.
-- Many HTTP OCR servers instead expect ISO 639-1 codes such as `en`, `de`, `fr`, or `ja`.
+- `ocrEngine: "auto"` extracts native text first, then prefers Apple Vision on macOS 14 or newer and falls back to Tesseract. Other systems use Tesseract.
+- Use `ocrEngine: "vision"` to require Apple Vision without fallback, or `ocrEngine: "tesseract"` to force LiteParse/Tesseract.
+- `ocrServerUrl` takes precedence over local OCR engine selection.
+- Use `ocrLanguage` for one OCR language and `ocrLanguages` only for multilingual OCR.
+- Apple Vision accepts BCP-47 identifiers and maps common Tesseract codes such as `eng`, `deu`, `fra`, `rus`, and `jpn`.
 - Increase `dpi` only when OCR quality or screenshot readability needs it.
-- Use `ocrServerUrl` only when the user already has or wants an external OCR server.
-- Built-in OCR may download missing language data. Supply local `.traineddata` through `tessdataPath` (or `TESSDATA_PREFIX`) for offline/air-gapped work or custom language data.
+- Tesseract may download missing language data. Supply `.traineddata` through `tessdataPath` or `TESSDATA_PREFIX` for offline or custom data.
 
 ### Password-protected documents
 
@@ -190,6 +189,7 @@ High-value `document_parse` parameters:
 - `targetPages`
 - `screenshotPages`
 - `ocr`
+- `ocrEngine`
 - `ocrLanguage`
 - `ocrLanguages`
 - `ocrServerUrl`

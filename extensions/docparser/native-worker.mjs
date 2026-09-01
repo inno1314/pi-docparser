@@ -15,6 +15,7 @@ import {
   writeSingleFrame,
 } from "./native-protocol.mjs";
 import { matchPageTextItems, projectSearchHit, writeParseOutputFile } from "./parse-output.mjs";
+import { applyVisionOcr, VisionOcrError } from "./vision-ocr.mjs";
 
 const PARSED_ARTIFACT_MAX_BYTES = 256 * 1024 * 1024;
 const SCREENSHOT_FILE_MAX_BYTES = 25 * 1024 * 1024;
@@ -49,6 +50,55 @@ function liteParseConfig(request) {
     quiet: true,
   };
 }
+/**
+ * Uses native text first, then Apple Vision on macOS, with LiteParse OCR as the auto fallback.
+ * @param {Record<string, unknown>} request
+ * @param {typeof import("@llamaindex/liteparse")} liteparse
+ */
+async function parseWithConfiguredOcr(request, liteparse) {
+  const wireConfig = /** @type {Record<string, unknown>} */ (request.config);
+  const config = liteParseConfig(request);
+  const inputPath = /** @type {string} */ (request.inputPath);
+  const stagingDir = /** @type {string} */ (request.stagingDir);
+  const engine = /** @type {"auto" | "vision" | "tesseract"} */ (wireConfig.ocrEngine ?? "auto");
+  const parser = new liteparse.LiteParse(config);
+
+  if (!config.ocrEnabled || config.ocrServerUrl || engine === "tesseract") {
+    return parser.parse(inputPath);
+  }
+  if (engine === "vision" && process.platform !== "darwin") {
+    throw new VisionOcrError("Apple Vision OCR is available only on macOS.");
+  }
+
+  const fastParser = new liteparse.LiteParse({ ...config, ocrEnabled: false });
+  const fastResult = await fastParser.parse(inputPath);
+  const missingText = fastResult.pages.some(
+    (page) => !Array.isArray(page.textItems) || page.textItems.length === 0,
+  );
+  if (!missingText || fastResult.pages.length === 0) return fastResult;
+
+  if (process.platform === "darwin") {
+    const renderParser = new liteparse.LiteParse({
+      dpi: config.dpi,
+      password: config.password,
+      quiet: true,
+    });
+    try {
+      return await applyVisionOcr({
+        parser: renderParser,
+        inputPath,
+        parseResult: fastResult,
+        stagingDir,
+        ocrLanguage: config.ocrLanguage,
+        numWorkers: /** @type {number} */ (wireConfig.numWorkers),
+      });
+    } catch (error) {
+      if (engine === "vision") throw error;
+    }
+  }
+
+  return parser.parse(inputPath);
+}
 
 /** @param {Record<string, unknown>} request @param {typeof import("@llamaindex/liteparse")} liteparse */
 async function runParse(request, liteparse) {
@@ -56,8 +106,7 @@ async function runParse(request, liteparse) {
   const outputPath = /** @type {string} */ (request.outputPath);
   await requireAbsent(outputPath, "Parse output");
   const partialPath = join(stagingDir, `${basename(outputPath)}.partial`);
-  const parser = new liteparse.LiteParse(liteParseConfig(request));
-  const parseResult = await parser.parse(/** @type {string} */ (request.inputPath));
+  const parseResult = await parseWithConfiguredOcr(request, liteparse);
   const metadata = await writeParseOutputFile(
     parseResult,
     /** @type {"text" | "json"} */ (
@@ -75,30 +124,7 @@ async function runParse(request, liteparse) {
 async function runSearch(request, liteparse) {
   const stagingDir = /** @type {string} */ (request.stagingDir);
   try {
-    const config = liteParseConfig(request);
-    let parser = new liteparse.LiteParse(config);
-    let parseResult;
-
-    // For PDF files with auto OCR (ocrEnabled true and no custom ocrServerUrl),
-    // attempt fast native-text extraction first (ocrEnabled: false).
-    // If sufficient text items are extracted across the parsed pages, skip heavy OCR.
-    const isPdf =
-      typeof request.inputPath === "string" && request.inputPath.toLowerCase().endsWith(".pdf");
-    if (isPdf && config.ocrEnabled && !config.ocrServerUrl) {
-      const fastParser = new liteparse.LiteParse({ ...config, ocrEnabled: false });
-      const fastResult = await fastParser.parse(/** @type {string} */ (request.inputPath));
-      const totalItems = fastResult.pages.reduce(
-        (acc, p) => acc + (p.textItems ? p.textItems.length : 0),
-        0,
-      );
-      if (totalItems > 0 || fastResult.pages.length === 0) {
-        parseResult = fastResult;
-      } else {
-        parseResult = await parser.parse(/** @type {string} */ (request.inputPath));
-      }
-    } else {
-      parseResult = await parser.parse(/** @type {string} */ (request.inputPath));
-    }
+    const parseResult = await parseWithConfiguredOcr(request, liteparse);
 
     /** @type {Array<Record<string, string | number>>} */
     const hits = [];
