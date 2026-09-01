@@ -222,7 +222,7 @@ function sanitizedExecArgv(): string[] {
 function nativeWorkerExecutable(): string {
   // LiteParse, LibreOffice, and the worker's fd-based protocol are validated under Node.
   // Oh My Pi may host extensions in Bun, so never use Bun's executable to launch this Node worker.
-  return process.release?.name === "node"
+  return !process.versions.bun && process.release?.name === "node"
     ? process.execPath
     : process.env.PI_DOCPARSER_NODE_PATH?.trim() || "node";
 }
