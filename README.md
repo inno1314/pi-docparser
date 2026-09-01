@@ -37,6 +37,8 @@ Ships a `parse-document` skill that teaches agents to:
 
 The Pi core peer ranges follow Pi's `"*"` package policy. That avoids pinning the host's core packages; it does not promise compatibility with every historical Pi version.
 
+Office files, including PPTX presentations, are accepted directly. The worker converts them to PDF with a job-owned LibreOffice profile before parsing, searching, or rendering screenshots. Call the document tool directly; agents do not need to run LibreOffice themselves.
+
 The Node floor, safer defaults and hard limits, removal of all-page screenshot behavior, bounded result details, and stable projected JSON are 4.0.0 breaking changes.
 
 ## Installation

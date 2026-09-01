@@ -11,6 +11,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - added a signed universal Apple Vision OCR helper for macOS 14 or newer, with Neural Engine preference, line bounding boxes, confidence values, language mapping, and bounded parallel page batches
 - added `ocrEngine: "auto" | "vision" | "tesseract"` to parsing and search; automatic mode preserves native text first, prefers Vision on macOS, and falls back to LiteParse/Tesseract
 
+### Fixed
+
+- converted supported Office documents to PDF in the isolated worker with a job-owned LibreOffice profile, avoiding direct native PPTX parsing crashes
+
 ### Tests
 
 - added macOS Vision OCR integration, language mapping, package-content, protocol compatibility, and cross-platform fallback coverage

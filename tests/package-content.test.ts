@@ -34,6 +34,7 @@ test("published package contains worker runtime and legal/skill assets but no te
     "extensions/docparser/native-worker.mjs",
     "extensions/docparser/parse-output.mjs",
     "extensions/docparser/vision-ocr.mjs",
+    "extensions/docparser/office-conversion.mjs",
     "licenses/LiteParse-APACHE-2.0.txt",
     "native/vision-ocr.swift",
     "scripts/build-vision-helper.mjs",
@@ -62,6 +63,7 @@ test("the packed worker has a plain-JavaScript project import graph", async () =
 
   assert.deepEqual(relativeImports.sort(), [
     "./native-protocol.mjs",
+    "./office-conversion.mjs",
     "./parse-output.mjs",
     "./vision-ocr.mjs",
   ]);

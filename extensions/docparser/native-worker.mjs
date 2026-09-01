@@ -15,6 +15,7 @@ import {
   writeSingleFrame,
 } from "./native-protocol.mjs";
 import { matchPageTextItems, projectSearchHit, writeParseOutputFile } from "./parse-output.mjs";
+import { convertOfficeToPdf } from "./office-conversion.mjs";
 import { applyVisionOcr, VisionOcrError } from "./vision-ocr.mjs";
 
 const PARSED_ARTIFACT_MAX_BYTES = 256 * 1024 * 1024;
@@ -58,8 +59,9 @@ function liteParseConfig(request) {
 async function parseWithConfiguredOcr(request, liteparse) {
   const wireConfig = /** @type {Record<string, unknown>} */ (request.config);
   const config = liteParseConfig(request);
-  const inputPath = /** @type {string} */ (request.inputPath);
   const stagingDir = /** @type {string} */ (request.stagingDir);
+  const sourceInputPath = /** @type {string} */ (request.inputPath);
+  const inputPath = await convertOfficeToPdf(sourceInputPath, stagingDir);
   const engine = /** @type {"auto" | "vision" | "tesseract"} */ (wireConfig.ocrEngine ?? "auto");
   const parser = new liteparse.LiteParse(config);
 
@@ -198,14 +200,13 @@ async function runScreenshot(request, liteparse) {
     password: /** @type {string | undefined} */ (request.password),
     quiet: true,
   });
+  const inputPath = await convertOfficeToPdf(/** @type {string} */ (request.inputPath), stagingDir);
   /** @type {Array<{pageNum: number, width: number, height: number, outputPath: string, bytes: number}>} */
   const screenshots = [];
   let totalBytes = 0;
 
   for (const requestedPage of /** @type {number[]} */ (request.pages)) {
-    const rendered = await parser.screenshot(/** @type {string} */ (request.inputPath), [
-      requestedPage,
-    ]);
+    const rendered = await parser.screenshot(inputPath, [requestedPage]);
     if (rendered.length !== 1 || rendered[0].pageNum !== requestedPage) {
       throw new Error(
         `Screenshot generation returned an unexpected result for page ${requestedPage}.`,

@@ -143,6 +143,7 @@ export function registerDocumentSearchTool(pi: ExtensionAPI, executor: NativeExe
       "Search parsed documents for a phrase and get page + bounding-box hits for visual citations.",
     promptGuidelines: [
       "Use document_search when the user asks where text appears in a document or needs source/citation locations.",
+      "Pass PPTX and other supported Office documents directly. The isolated worker converts them to PDF before searching; do not ask the user or model to run LibreOffice.",
       "OCR auto mode extracts native text first, then prefers Apple Vision on macOS and falls back to Tesseract. Use ocrEngine only when the user requests a specific backend.",
       "By default, document_search searches the first 100 pages of a document. If searching large documents (>100 pages), specify maxPages (e.g. 1000) or targetPages (e.g. '100-300').",
       "Use targetPages when the relevant section is known; it is faster than searching the whole document.",

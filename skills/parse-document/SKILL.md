@@ -29,6 +29,10 @@ Recommended workflow for known text: `document_search` first, then `document_scr
 
 ## Efficient parsing
 
+### Office presentations
+
+Pass supported Office files, including `.pptx`, directly to `document_parse`, `document_search`, or `document_screenshot`. The isolated worker converts them to PDF with a job-owned LibreOffice profile before parsing. Do not direct users or models to run LibreOffice manually.
+
 ### Choose the smallest useful output
 
 - Use `format: "text"` when the user wants to read, summarize, quote, search, or review the document.

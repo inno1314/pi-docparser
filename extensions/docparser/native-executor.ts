@@ -219,6 +219,14 @@ function sanitizedExecArgv(): string[] {
   return [];
 }
 
+function nativeWorkerExecutable(): string {
+  // LiteParse, LibreOffice, and the worker's fd-based protocol are validated under Node.
+  // Oh My Pi may host extensions in Bun, so never use Bun's executable to launch this Node worker.
+  return process.release?.name === "node"
+    ? process.execPath
+    : process.env.PI_DOCPARSER_NODE_PATH?.trim() || "node";
+}
+
 class NativeExecutorImpl implements NativeExecutor {
   private readonly workerUrl: URL | string;
   private readonly timeoutMs: number;
@@ -390,7 +398,7 @@ class NativeExecutorImpl implements NativeExecutor {
     let teardownPromise: Promise<boolean> | undefined;
     let responseError: unknown;
 
-    const child = spawn(process.execPath, [...sanitizedExecArgv(), workerPath], {
+    const child = spawn(nativeWorkerExecutable(), [...sanitizedExecArgv(), workerPath], {
       stdio: ["ignore", "pipe", "pipe", "pipe", "pipe"],
       detached: process.platform !== "win32",
       windowsHide: true,

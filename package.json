@@ -43,7 +43,7 @@
     "lint:fix": "oxlint --fix .",
     "typecheck": "tsc -p tsconfig.json",
     "test": "node --import tsx --test --test-concurrency=1 tests/*.test.ts",
-    "test:unit": "node --import tsx --test tests/config-policy.test.ts tests/deps.test.ts tests/input-policy.test.ts tests/package-metadata.test.ts tests/parse-output.test.ts tests/tools.test.ts tests/vision-ocr.test.ts",
+    "test:unit": "node --import tsx --test tests/config-policy.test.ts tests/deps.test.ts tests/input-policy.test.ts tests/office-conversion.test.ts tests/package-metadata.test.ts tests/parse-output.test.ts tests/tools.test.ts tests/vision-ocr.test.ts",
     "test:native": "node --import tsx --test --test-concurrency=1 tests/native-executor.test.ts tests/native-worker.integration.test.ts",
     "test:packed": "node --import tsx --test tests/packed-install.test.ts",
     "test:package": "node --import tsx --test tests/package-content.test.ts",
