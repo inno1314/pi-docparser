@@ -294,6 +294,40 @@ test("worker enforces search and screenshot result boundaries with fake LitePars
   await assert.rejects(stat(aggregateOutput), /ENOENT/);
 });
 
+test("worker recovers text before writing artifacts and searching", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "native-worker-encoding-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await installFakeLiteParse(t, directory);
+  const executor = createNativeExecutor({ timeoutMs: 30_000 });
+  t.after(() => executor.dispose());
+
+  const inputPath = join(directory, "mojibake.json");
+  await writeFile(inputPath, JSON.stringify({ searchItems: [textItem("Çàäà÷è")] }));
+  const outputPath = join(directory, "parsed.json");
+  await executor.execute({
+    operation: "parse",
+    inputPath,
+    stagingDir: join(directory, ".parse"),
+    outputPath,
+    config,
+  });
+  const parsed = JSON.parse(await readFile(outputPath, "utf8"));
+  assert.equal(parsed.text, "Задачи");
+  assert.equal(parsed.pages[0].textItems[0].text, "Задачи");
+
+  const searched = await executor.execute({
+    operation: "search",
+    inputPath,
+    stagingDir: join(directory, ".search"),
+    phrase: "Задачи",
+    caseSensitive: false,
+    maxResults: 10,
+    config,
+  });
+  assert.equal(searched.hits.length, 1);
+  assert.equal(searched.hits[0].text, "Задачи");
+});
+
 test("failed screenshot cleanup cannot remove an earlier parse artifact", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "native-worker-preservation-"));
   t.after(() => rm(directory, { recursive: true, force: true }));

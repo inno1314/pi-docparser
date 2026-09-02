@@ -10,6 +10,8 @@ import {
   matchPageTextItems,
   normalizeSearchString,
   projectPage,
+  recoverCp1251Mojibake,
+  recoverParseText,
   streamParseOutput,
   writeParseOutputFile,
 } from "../extensions/docparser/parse-output.mjs";
@@ -87,6 +89,29 @@ test("stable JSON projection has fixed order and exact JSON.stringify escaping",
   assert.match(buffer.toString("utf8"), /\\ud800/);
   assert.match(buffer.toString("utf8"), /\\udc00/);
   assert.equal(buffer.toString("utf8").includes("😀"), true);
+});
+
+test("recovers Windows-1251 mojibake without changing mathematical symbols", () => {
+  assert.equal(recoverCp1251Mojibake("Áûëî M× êàê"), "Было M× как");
+  assert.equal(recoverCp1251Mojibake("Café × résumé"), "Café × résumé");
+
+  const source = {
+    text: "Çàäà÷è",
+    pages: [
+      {
+        pageNum: 1,
+        text: "Áûëî",
+        textItems: [{ text: "Ïîñ÷èòàòü", x: 0, y: 0, width: 1, height: 1 }],
+      },
+    ],
+  };
+  const recovered = recoverParseText(source);
+  assert.notEqual(recovered, source);
+  assert.equal(recovered.text, "Задачи");
+  assert.equal(recovered.pages[0].text, "Было");
+  assert.equal(recovered.pages[0].textItems[0].text, "Посчитать");
+  assert.equal(source.pages[0].textItems[0].text, "Ïîñ÷èòàòü");
+  assert.equal(recoverParseText({ text: "M×", pages: [] }).text, "M×");
 });
 
 test("required non-finite values reject while invalid optional values are omitted", async () => {

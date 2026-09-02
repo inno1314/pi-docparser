@@ -7,6 +7,72 @@ import { finished } from "node:stream/promises";
 const DEFAULT_MAX_BYTES = 256 * 1024 * 1024;
 const CHUNK_CODE_UNITS = 16 * 1024;
 
+const CP1251_DECODER = new TextDecoder("windows-1251", { fatal: true });
+const CP1251_MOJIBAKE_WORD = /[\u00c0-\u00ff]{2,}/gu;
+
+/**
+ * Recovers Windows-1251 Cyrillic that a PDF extractor returned as Latin-1.
+ * Only multi-character high-byte runs are eligible, so ordinary symbols such
+ * as the multiplication sign in mathematical expressions remain untouched.
+ * @param {string} text
+ */
+export function recoverCp1251Mojibake(text) {
+  return text.replace(CP1251_MOJIBAKE_WORD, (run) => {
+    const recovered = CP1251_DECODER.decode(Buffer.from(run, "latin1"));
+    const cyrillic = recovered.match(/[А-Яа-яЁё]/gu)?.length ?? 0;
+    return cyrillic / run.length >= 0.9 ? recovered : run;
+  });
+}
+
+/**
+ * Applies conservative text-encoding recovery without mutating the upstream
+ * LiteParse result. Search consumes this projection before matching.
+ * @template T
+ * @param {T} value
+ * @returns {T}
+ */
+export function recoverParseText(value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
+  const result = /** @type {Record<string, unknown>} */ (value);
+  const text = typeof result.text === "string" ? recoverCp1251Mojibake(result.text) : result.text;
+  if (!Array.isArray(result.pages)) {
+    return text === result.text ? value : /** @type {T} */ ({ ...result, text });
+  }
+
+  let pages = result.pages;
+  for (let pageIndex = 0; pageIndex < result.pages.length; pageIndex += 1) {
+    const page = result.pages[pageIndex];
+    if (typeof page !== "object" || page === null || Array.isArray(page)) continue;
+    const sourcePage = /** @type {Record<string, unknown>} */ (page);
+    const pageText =
+      typeof sourcePage.text === "string"
+        ? recoverCp1251Mojibake(sourcePage.text)
+        : sourcePage.text;
+    let textItems = sourcePage.textItems;
+    const sourceTextItems = sourcePage.textItems;
+    if (Array.isArray(sourceTextItems)) {
+      let recoveredTextItems = sourceTextItems;
+      for (let itemIndex = 0; itemIndex < sourceTextItems.length; itemIndex += 1) {
+        const item = sourceTextItems[itemIndex];
+        if (typeof item !== "object" || item === null || Array.isArray(item)) continue;
+        const sourceItem = /** @type {Record<string, unknown>} */ (item);
+        if (typeof sourceItem.text !== "string") continue;
+        const itemText = recoverCp1251Mojibake(sourceItem.text);
+        if (itemText === sourceItem.text) continue;
+        if (recoveredTextItems === sourceTextItems) recoveredTextItems = [...sourceTextItems];
+        recoveredTextItems[itemIndex] = { ...sourceItem, text: itemText };
+      }
+      textItems = recoveredTextItems;
+    }
+    if (pageText === sourcePage.text && textItems === sourcePage.textItems) continue;
+    if (pages === result.pages) pages = [...result.pages];
+    pages[pageIndex] = { ...sourcePage, text: pageText, textItems };
+  }
+  return text === result.text && pages === result.pages
+    ? value
+    : /** @type {T} */ ({ ...result, text, pages });
+}
+
 /** @param {unknown} value @param {string} label */
 function requiredString(value, label) {
   if (typeof value !== "string") throw new Error(`${label} must be a string.`);
