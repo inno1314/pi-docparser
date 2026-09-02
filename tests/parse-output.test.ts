@@ -93,6 +93,7 @@ test("stable JSON projection has fixed order and exact JSON.stringify escaping",
 
 test("recovers Windows-1251 mojibake without changing mathematical symbols", () => {
   assert.equal(recoverCp1251Mojibake("Áûëî M× êàê"), "Было M× как");
+  assert.equal(recoverCp1251Mojibake("Â êàêîì состоянии"), "В каком состоянии");
   assert.equal(recoverCp1251Mojibake("Café × résumé"), "Café × résumé");
 
   const source = {

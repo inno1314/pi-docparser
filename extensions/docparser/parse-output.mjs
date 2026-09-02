@@ -11,6 +11,15 @@ const CP1251_DECODER = new TextDecoder("windows-1251", { fatal: true });
 const CP1251_MOJIBAKE_CHAR = /[\u00c0-\u00ff]/u;
 const CP1251_MOJIBAKE_EXCLUSIONS = new Set(["×", "÷"]);
 
+const CP1251_MOJIBAKE_WORD = /[\u00c0-\u00ff]{2,}/gu;
+
+/** @param {string} value */
+function isCp1251Cyrillic(value) {
+  const decoded = CP1251_DECODER.decode(Buffer.from(value, "latin1"));
+  const cyrillic = decoded.match(/[А-Яа-яЁё]/gu)?.length ?? 0;
+  return cyrillic / value.length >= 0.9;
+}
+
 /** @param {string} value */
 function decodeCp1251Char(value) {
   if (CP1251_MOJIBAKE_EXCLUSIONS.has(value)) return value;
@@ -27,12 +36,13 @@ function decodeCp1251Char(value) {
 export function recoverCp1251Mojibake(text) {
   return text.replace(/[\u00c0-\u00ff]+/gu, (run, offset, source) => {
     const recovered = CP1251_DECODER.decode(Buffer.from(run, "latin1"));
-    const cyrillic = recovered.match(/[А-Яа-яЁё]/gu)?.length ?? 0;
-    if (run.length >= 2 && cyrillic / run.length >= 0.9) return recovered;
+    if (run.length >= 2 && isCp1251Cyrillic(run)) return recovered;
     const lineStart = source.lastIndexOf("\n", offset) + 1;
     const lineEnd = source.indexOf("\n", offset + run.length);
     const line = source.slice(lineStart, lineEnd === -1 ? source.length : lineEnd);
-    const lineHasCyrillic = /[А-Яа-яЁё]/u.test(line);
+    const lineHasCyrillic =
+      /[А-Яа-яЁё]/u.test(line) ||
+      [...line.matchAll(CP1251_MOJIBAKE_WORD)].some(([word]) => isCp1251Cyrillic(word));
     return [...run].map((char) => (lineHasCyrillic ? decodeCp1251Char(char) : char)).join("");
   });
 }
