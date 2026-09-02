@@ -8,19 +8,36 @@ const DEFAULT_MAX_BYTES = 256 * 1024 * 1024;
 const CHUNK_CODE_UNITS = 16 * 1024;
 
 const CP1251_DECODER = new TextDecoder("windows-1251", { fatal: true });
-const CP1251_MOJIBAKE_WORD = /[\u00c0-\u00ff]{2,}/gu;
+const CP1251_MOJIBAKE_CHAR = /[\u00c0-\u00ff]/u;
+const CP1251_MOJIBAKE_EXCLUSIONS = new Set(["×", "÷"]);
+
+/** @param {string} value */
+function decodeCp1251Char(value) {
+  if (CP1251_MOJIBAKE_EXCLUSIONS.has(value)) return value;
+  const decoded = CP1251_DECODER.decode(Buffer.from(value, "latin1"));
+  return /[А-Яа-яЁё]/u.test(decoded) ? decoded : value;
+}
 
 /**
  * Recovers Windows-1251 Cyrillic that a PDF extractor returned as Latin-1.
- * Only multi-character high-byte runs are eligible, so ordinary symbols such
- * as the multiplication sign in mathematical expressions remain untouched.
+ * Multi-character runs are always eligible; isolated characters are changed
+ * only when adjacent to Cyrillic text, avoiding ordinary symbols and accents.
  * @param {string} text
  */
 export function recoverCp1251Mojibake(text) {
-  return text.replace(CP1251_MOJIBAKE_WORD, (run) => {
+  return text.replace(/[\u00c0-\u00ff]+/gu, (run, offset, source) => {
     const recovered = CP1251_DECODER.decode(Buffer.from(run, "latin1"));
     const cyrillic = recovered.match(/[А-Яа-яЁё]/gu)?.length ?? 0;
-    return cyrillic / run.length >= 0.9 ? recovered : run;
+    if (run.length >= 2 && cyrillic / run.length >= 0.9) return recovered;
+    return [...run]
+      .map((char, index) => {
+        const before = source[offset + index - 1] ?? "";
+        const after = source[offset + index + 1] ?? "";
+        return /[А-Яа-яЁё]/u.test(before) || /[А-Яа-яЁё]/u.test(after)
+          ? decodeCp1251Char(char)
+          : char;
+      })
+      .join("");
   });
 }
 
