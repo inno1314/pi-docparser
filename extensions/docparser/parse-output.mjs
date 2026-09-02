@@ -29,15 +29,11 @@ export function recoverCp1251Mojibake(text) {
     const recovered = CP1251_DECODER.decode(Buffer.from(run, "latin1"));
     const cyrillic = recovered.match(/[А-Яа-яЁё]/gu)?.length ?? 0;
     if (run.length >= 2 && cyrillic / run.length >= 0.9) return recovered;
-    return [...run]
-      .map((char, index) => {
-        const before = source[offset + index - 1] ?? "";
-        const after = source[offset + index + 1] ?? "";
-        return /[А-Яа-яЁё]/u.test(before) || /[А-Яа-яЁё]/u.test(after)
-          ? decodeCp1251Char(char)
-          : char;
-      })
-      .join("");
+    const lineStart = source.lastIndexOf("\n", offset) + 1;
+    const lineEnd = source.indexOf("\n", offset + run.length);
+    const line = source.slice(lineStart, lineEnd === -1 ? source.length : lineEnd);
+    const lineHasCyrillic = /[А-Яа-яЁё]/u.test(line);
+    return [...run].map((char) => (lineHasCyrillic ? decodeCp1251Char(char) : char)).join("");
   });
 }
 
