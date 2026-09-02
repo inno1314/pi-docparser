@@ -14,7 +14,12 @@ import {
   validateWorkerRequest,
   writeSingleFrame,
 } from "./native-protocol.mjs";
-import { matchPageTextItems, projectSearchHit, writeParseOutputFile } from "./parse-output.mjs";
+import {
+  matchPageTextItems,
+  projectSearchHit,
+  recoverParseText,
+  writeParseOutputFile,
+} from "./parse-output.mjs";
 import { convertOfficeToPdf } from "./office-conversion.mjs";
 import { applyVisionOcr, VisionOcrError } from "./vision-ocr.mjs";
 
@@ -108,7 +113,7 @@ async function runParse(request, liteparse) {
   const outputPath = /** @type {string} */ (request.outputPath);
   await requireAbsent(outputPath, "Parse output");
   const partialPath = join(stagingDir, `${basename(outputPath)}.partial`);
-  const parseResult = await parseWithConfiguredOcr(request, liteparse);
+  const parseResult = recoverParseText(await parseWithConfiguredOcr(request, liteparse));
   const metadata = await writeParseOutputFile(
     parseResult,
     /** @type {"text" | "json"} */ (
@@ -126,7 +131,7 @@ async function runParse(request, liteparse) {
 async function runSearch(request, liteparse) {
   const stagingDir = /** @type {string} */ (request.stagingDir);
   try {
-    const parseResult = await parseWithConfiguredOcr(request, liteparse);
+    const parseResult = recoverParseText(await parseWithConfiguredOcr(request, liteparse));
 
     /** @type {Array<Record<string, string | number>>} */
     const hits = [];
